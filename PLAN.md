@@ -25,6 +25,7 @@ A multiplayer online card game for 4-6 players where the goal is to have the low
 ### Turn Flow
 
 1. **Before taking action**: Player can call "CHECK" to initiate final round
+   - The checker still takes their normal turn action afterward
 
 2. **Choose one of 3 actions**:
 
@@ -41,7 +42,7 @@ A multiplayer online card game for 4-6 players where the goal is to have the low
    - Attempt to match top discard pile card by rank (7→7, K→K, etc.)
    - Face cards: J→J, Q→Q, K→K (color irrelevant)
    - **Success**: Card goes to discard pile, hand shrinks by 1
-   - **Fail**: Card stays in hand + draw 1 penalty card (hand grows)
+   - **Fail**: Card stays in hand + draw 1 penalty card face-down (player does NOT see it, hand grows)
 
 ### Red Face Card Special Effects
 
@@ -65,6 +66,7 @@ A multiplayer online card game for 4-6 players where the goal is to have the low
 - Main hand starts at 4 cards (slots A, B, C, D)
 - Can grow: penalties add cards (E, F, G...)
 - Can shrink: successful burns reduce hand size (down to 0 theoretically)
+- Slot labels persist — if slot B is burned, remaining slots are A, C, D (NOT re-labeled)
 - Players must remember which cards they peeked initially
 
 ### Ending a Round
@@ -73,8 +75,13 @@ A multiplayer online card game for 4-6 players where the goal is to have the low
 2. Play continues in turn order until it returns to the checker
 3. All players reveal hands simultaneously
 4. Lowest sum wins the round (no points added)
-5. All other players add their hand sum to their total score
-6. **Game ends when any player reaches 100+ total points** (they lose)
+5. If multiple players tie for lowest sum, ALL tied players score 0
+6. All other players add their hand sum to their total score
+7. **Game ends when any player reaches 100+ total points**:
+   - That player loses
+   - If multiple players reach 100+ in the same round, the highest score loses
+   - If tied at 100+, all tied players lose
+   - The player with the lowest total score wins
 
 ### Special Scenarios
 - **Draw pile empty**: Shuffle discard pile into new draw pile (keep top card visible)
@@ -192,7 +199,7 @@ check-card-game/
   currentTurnIndex: number;   // Index of current player
   checkCalledBy: string | null; // Player ID who called check
   roundNumber: number;        // Current round (starts at 1)
-  scores: Map<PlayerId, number>; // Total scores
+  scores: Record<string, number>; // Total scores
 }
 ```
 
@@ -221,6 +228,36 @@ check-card-game/
   isRed: boolean;             // Helper for special effects
 }
 ```
+
+#### ClientGameState Schema (sanitized state sent to clients)
+```typescript
+{
+  deckCount: number;             // How many cards remain (NOT the cards themselves)
+  discardPile: Card[];           // Discard pile (top is visible to all)
+  players: ClientPlayerState[];  // Sanitized player states
+  currentTurnIndex: number;
+  checkCalledBy: string | null;
+  roundNumber: number;
+  scores: Record<string, number>; // Total scores (plain object, not Map)
+}
+```
+
+#### ClientPlayerState Schema
+```typescript
+{
+  playerId: string;
+  username: string;
+  hand: {
+    slot: string;
+    card: Card | null;           // Card data for own cards, null for other players' hidden cards
+  }[];
+  cardCount: number;
+  totalScore: number;
+}
+```
+
+> **Note:** The server constructs a per-player `ClientGameState` where the requesting
+> player's own cards are included but all other players' cards are `null`.
 
 ---
 
@@ -285,14 +322,22 @@ check-card-game/
 
 #### Game Actions
 ```typescript
+// Primary action — for drawDeck, this only initiates the draw (phase 1)
 'playerAction' → {
   roomCode: string,
   playerId: string,
   action: {
     type: 'drawDeck' | 'takeDiscard' | 'burn',
-    discardSlot?: string,  // For drawDeck/takeDiscard
-    burnSlot?: string      // For burn
+    discardSlot?: string,  // Required for takeDiscard (which hand slot to replace)
+    burnSlot?: string      // Required for burn (which hand slot to attempt)
   }
+}
+
+// Phase 2 of drawDeck: after seeing the drawn card, player decides what to discard
+'discardAfterDraw' → {
+  roomCode: string,
+  playerId: string,
+  discardSlot: string      // 'drawn' to discard the drawn card, or 'A'/'B'/etc. to replace a hand card
 }
 
 'callCheck' → { roomCode: string, playerId: string }
@@ -316,8 +361,8 @@ check-card-game/
   roomCode: string,
   playerId: string,
   choice: {
-    keepCards: Card[],      // 0, 1, or 2 cards
-    discardSlots: string[]  // 0, 1, or 2 slots from hand
+    keepIndices: number[],     // Indices (0 and/or 1) of the 2 drawn cards to keep
+    discardSlots: string[]     // Slots from hand to discard (must match keepIndices.length)
   }
 }
 ```
@@ -339,20 +384,24 @@ check-card-game/
 #### Game State
 ```typescript
 'gameStarted' → {
-  gameState: GameState,
-  yourCards: Card[],        // Your 4 cards
-  peekSlots: string[]       // Which 2 to reveal initially
+  gameState: ClientGameState,  // Sanitized state (no hidden card data)
+  peekedCards: {               // ONLY the 2 cards the player is allowed to see
+    slot: string,
+    card: Card
+  }[]
 }
 
 'gameStateUpdated' → {
-  gameState: GameState      // Full state (cards hidden for others)
+  gameState: ClientGameState    // Sanitized: own cards visible, others hidden
 }
 
 'yourTurn' → { playerId: string }
 
 'cardDrawn' → {
   playerId: string,
-  card: Card                // Private - only to player who drew
+  card: Card | null,         // The drawn card (private); null for penalty draws (player cannot see penalty cards)
+  isPenalty: boolean,        // true if this is a burn-failure penalty draw
+  awaitingDiscard: boolean   // true if client must now emit 'discardAfterDraw'
 }
 
 'waitingForSpecialEffect' → {
@@ -364,11 +413,11 @@ check-card-game/
 'roundEnded' → {
   allHands: { playerId: string, cards: Card[], sum: number }[],
   winner: string,
-  updatedScores: Map<PlayerId, number>
+  updatedScores: Record<string, number>
 }
 
 'gameEnded' → {
-  finalScores: Map<PlayerId, number>,
+  finalScores: Record<string, number>,
   winner: string,           // Player with lowest score
   loser: string             // Player who hit 100+
 }
@@ -505,10 +554,9 @@ check-card-game/
    - Deal 4 cards to each player (slots A/B/C/D)
    - Select random first player
    - For each player: randomly pick 2 slots to peek
-3. Server emits 'gameStarted' to all clients with:
-   - Full game state
-   - Each player's cards (private)
-   - Each player's peek slots (private)
+3. Server emits 'gameStarted' to each client (individually) with:
+   - Sanitized game state (no hidden card data)
+   - Only the 2 peeked cards and their slots (NOT all 4 cards)
 4. Clients receive event:
    - Navigate to game board
    - Display 4 cards face down
@@ -524,7 +572,7 @@ check-card-game/
 Current player's turn:
 1. Client enables action buttons
 2. Player can:
-   a. Call "CHECK" (before action) → skip to Check Flow
+   a. Call "CHECK" (before action) → then still choose an action below
    b. Choose one of 3 actions
 
 Action A: Draw from Deck
@@ -551,7 +599,7 @@ Action C: Burn Card
 2. Click "Burn Card"
 3. Server validates rank match:
    - SUCCESS: Card removed, hand shrinks
-   - FAIL: Card stays, draw penalty card
+   - FAIL: Card stays, draw penalty card face-down (player does NOT see it)
 4. Broadcast updated state
 5. Next turn
 ```
@@ -611,11 +659,12 @@ Red King (Draw 2):
 3. Server marks checker ID, records turn index
 4. Server broadcasts check was called
 5. Client shows notification: "[Player] called CHECK!"
-6. Game continues normal turn order
-7. Each subsequent turn:
+6. Checker then takes their normal turn action (draw, take discard, or burn)
+7. Game continues normal turn order from next player
+8. Each subsequent turn:
    - Server checks if currentTurnIndex == checkerTurnIndex
    - If NO: continue normal turn
-   - If YES: End round
+   - If YES: End round (checker does NOT take another action)
 8. Round end sequence:
    - Server reveals all hands
    - Calculate sums

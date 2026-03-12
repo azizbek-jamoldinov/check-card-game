@@ -43,7 +43,7 @@ Check Card Game is a multiplayer card game for 4-6 players. The goal is to have 
 
 ## Turn Flow
 
-At the start of a player's turn, BEFORE taking any action, the player may optionally call "CHECK" to initiate the final round.
+At the start of a player's turn, BEFORE taking any action, the player may optionally call "CHECK" to initiate the final round. The checker still takes their normal turn action afterward.
 
 Then the player must choose exactly ONE of 3 actions:
 
@@ -137,11 +137,10 @@ Special effects NEVER trigger:
 ## Check Mechanism
 
 1. A player calls "CHECK" at the START of their turn, BEFORE taking any action
-2. The checker does NOT take a turn action - their turn is skipped
-3. Play continues in normal turn order
-4. Each remaining player gets exactly one more turn
-5. When it is the checker's turn again, the round ends immediately (no action taken)
-6. All players reveal their hands simultaneously
+2. The checker then takes their normal turn action (draw, take discard, or burn) as usual
+3. Play continues in normal turn order — each remaining player gets exactly one more turn
+4. When it is the checker's turn again, the round ends immediately (no action taken)
+5. All players reveal their hands simultaneously
 
 ---
 
