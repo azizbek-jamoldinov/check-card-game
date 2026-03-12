@@ -11,6 +11,15 @@
 - After completing a milestone or group of related features, update `README.md` to reflect current project status (e.g., setup instructions, which features are working, known limitations).
 - Never leave completed work untracked — update progress immediately after finishing, not in batches.
 
+## Branching Strategy
+
+- Each feature or feature group must be implemented on its own branch off `main`.
+- Branch naming convention: `feature/<short-description>` (e.g., `feature/room-management`, `feature/deck-engine`, `feature/burn-action`).
+- Related features may be grouped into a single branch if they are tightly coupled and cannot function independently (e.g., all data model types in one branch).
+- Never commit directly to `main`.
+- Only merge a feature branch into `main` after it has been fully tested and verified (see Testing & Feature Verification below).
+- After a successful merge, delete the feature branch.
+
 ## Testing & Feature Verification
 
 After every feature implementation, verify the build before marking the feature complete.
