@@ -15,7 +15,6 @@ import { createShuffledDeck, drawFromDeck } from './Deck';
 
 const INITIAL_SLOTS: SlotLabel[] = ['A', 'B', 'C', 'D'];
 const CARDS_PER_PLAYER = 4;
-const PEEK_COUNT = 2;
 
 // ============================================================
 // F-028: Deal Cards
@@ -45,24 +44,14 @@ export function dealCards(gameState: GameState): void {
 // F-029: Select Initial Peek Slots
 // ============================================================
 
+const PEEK_SLOTS: SlotLabel[] = ['C', 'D'];
+
 /**
- * Randomly selects PEEK_COUNT slots from the player's hand for initial peek.
- * Returns the selected slot labels.
+ * Returns the fixed peek slots (C and D) for the initial peek phase.
+ * Players always peek at their bottom two cards.
  */
-export function selectInitialPeekSlots(player: PlayerState): SlotLabel[] {
-  const slots = player.hand.map((h) => h.slot);
-
-  // Fisher-Yates partial shuffle to pick PEEK_COUNT random slots
-  const selected: SlotLabel[] = [];
-  const available = [...slots];
-
-  for (let i = 0; i < PEEK_COUNT && available.length > 0; i++) {
-    const idx = Math.floor(Math.random() * available.length);
-    selected.push(available[idx]);
-    available.splice(idx, 1);
-  }
-
-  return selected;
+export function selectInitialPeekSlots(_player: PlayerState): SlotLabel[] {
+  return [...PEEK_SLOTS];
 }
 
 /**

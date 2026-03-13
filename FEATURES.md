@@ -48,17 +48,17 @@ Derived from PLAN.md. Features are grouped by domain and ordered by implementati
 ### 5. Game Setup & Initial Peek
 
 - [x] **F-028**: Deal 4 cards to each player into slots A, B, C, D
-- [x] **F-029**: Randomly select 2 peek slots per player (server-side)
+- [x] **F-029**: Select peek slots C and D per player (server-side)
 - [x] **F-030**: Send only peeked cards to each client (not all 4) via `gameStarted` event
 - [x] **F-031**: Client-side 3-second peek reveal — show 2 cards face up, then flip back down
 - [x] **F-032**: Random first player selection
 
 ### 6. Turn System
 
-- [ ] **F-033**: Turn order management — sequential, advance to next player after action
-- [ ] **F-034**: Turn validation — server rejects actions from non-current player
-- [ ] **F-035**: Action button enable/disable based on turn state
-- [ ] **F-036**: `yourTurn` event — notify current player
+- [x] **F-033**: Turn order management — sequential, advance to next player after action
+- [x] **F-034**: Turn validation — server rejects actions from non-current player
+- [x] **F-035**: Action button enable/disable based on turn state
+- [x] **F-036**: `yourTurn` event — notify current player
 
 ### 7. Action: Draw from Deck (Two-Phase)
 

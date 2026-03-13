@@ -1,5 +1,17 @@
 import { useEffect, useState, useCallback, FC } from 'react';
-import { Box, Flex, Grid, Text, VStack, HStack, Badge, Heading, Progress } from '@chakra-ui/react';
+import {
+  Box,
+  Flex,
+  Grid,
+  Text,
+  VStack,
+  HStack,
+  Badge,
+  Heading,
+  Progress,
+  Tooltip,
+  useToast,
+} from '@chakra-ui/react';
 import { useNavigate } from 'react-router-dom';
 import { useSocket } from '../context/SocketContext';
 import { Card } from '../components/cards/Card';
@@ -72,7 +84,9 @@ const OpponentRow: FC<OpponentProps> = ({ player, isCurrentTurn }) => {
 
 export const GameBoard: FC = () => {
   const navigate = useNavigate();
-  const { gameState, peekedCards, playerId, roomData } = useSocket();
+  const { gameState, peekedCards, playerId, roomData, isMyTurn, turnData, endPeek, performAction } =
+    useSocket();
+  const toast = useToast();
 
   // Peek animation state
   const [isPeeking, setIsPeeking] = useState(true);
@@ -85,7 +99,7 @@ export const GameBoard: FC = () => {
     }
   }, [gameState, roomData, navigate]);
 
-  // 3-second peek countdown (F-031)
+  // Peek countdown — when timer expires, call endPeek to transition to playing (F-031, F-033)
   useEffect(() => {
     if (!isPeeking || !peekedCards || peekedCards.length === 0) return;
 
@@ -101,11 +115,13 @@ export const GameBoard: FC = () => {
         clearInterval(timer);
         setIsPeeking(false);
         setPeekProgress(0);
+        // Notify server to transition from peeking to playing
+        endPeek();
       }
     }, PEEK_TICK_MS);
 
     return () => clearInterval(timer);
-  }, [isPeeking, peekedCards]);
+  }, [isPeeking, peekedCards, endPeek]);
 
   // Helper: is this slot being peeked?
   const isPeekedSlot = useCallback(
@@ -124,6 +140,39 @@ export const GameBoard: FC = () => {
       return peeked?.card ?? null;
     },
     [isPeeking, peekedCards],
+  );
+
+  // ----------------------------------------------------------
+  // Action handlers — click draw pile / discard pile / hand card
+  // ----------------------------------------------------------
+
+  const canAct = isMyTurn && gameState?.phase === 'playing';
+
+  const handleDrawDeck = useCallback(async () => {
+    if (!canAct || !turnData?.availableActions.includes('drawDeck')) return;
+    const result = await performAction('drawDeck');
+    if (!result.success && result.error) {
+      toast({ title: result.error, status: 'error', duration: 2000, position: 'top' });
+    }
+  }, [canAct, turnData, performAction, toast]);
+
+  const handleTakeDiscard = useCallback(async () => {
+    if (!canAct || !turnData?.availableActions.includes('takeDiscard')) return;
+    const result = await performAction('takeDiscard');
+    if (!result.success && result.error) {
+      toast({ title: result.error, status: 'error', duration: 2000, position: 'top' });
+    }
+  }, [canAct, turnData, performAction, toast]);
+
+  const handleBurnCard = useCallback(
+    async (slot: string) => {
+      if (!canAct || !turnData?.availableActions.includes('burn')) return;
+      const result = await performAction('burn', slot);
+      if (!result.success && result.error) {
+        toast({ title: result.error, status: 'error', duration: 2000, position: 'top' });
+      }
+    },
+    [canAct, turnData, performAction, toast],
   );
 
   if (!gameState || !playerId) {
@@ -146,9 +195,29 @@ export const GameBoard: FC = () => {
     <Box minH="100vh" bg="gray.900" display="flex" flexDirection="column" position="relative">
       {/* Peek overlay / countdown */}
       {isPeeking && peekedCards && peekedCards.length > 0 && (
-        <Box position="fixed" top={0} left={0} right={0} zIndex={10} px={4} pt={2}>
-          <VStack spacing={1}>
-            <Text fontSize="sm" color="yellow.300" fontWeight="bold">
+        <Box
+          position="fixed"
+          top={0}
+          left={0}
+          right={0}
+          bottom={0}
+          zIndex={10}
+          display="flex"
+          alignItems="center"
+          justifyContent="center"
+          bg="blackAlpha.700"
+        >
+          <VStack
+            spacing={2}
+            bg="gray.800"
+            px={6}
+            py={4}
+            borderRadius="lg"
+            border="1px solid"
+            borderColor="yellow.400"
+            shadow="dark-lg"
+          >
+            <Text fontSize="md" color="yellow.300" fontWeight="bold">
               Memorize your cards!
             </Text>
             <Progress
@@ -225,43 +294,79 @@ export const GameBoard: FC = () => {
         {/* Center: Draw pile and Discard pile */}
         <Flex justify="center" align="center" gap={{ base: 6, md: 10 }}>
           {/* Draw Pile */}
-          <VStack spacing={2}>
-            <CardBack size="md" />
-            <Text fontSize="xs" color="gray.400">
-              Deck ({gameState.deckCount})
-            </Text>
-          </VStack>
+          <Tooltip
+            label={
+              canAct && turnData?.availableActions.includes('drawDeck')
+                ? 'Draw from deck'
+                : !canAct
+                  ? 'Not your turn'
+                  : ''
+            }
+            isDisabled={!canAct && gameState.phase !== 'playing'}
+          >
+            <VStack spacing={2}>
+              <CardBack
+                size="md"
+                isClickable={canAct && (turnData?.availableActions.includes('drawDeck') ?? false)}
+                onClick={handleDrawDeck}
+              />
+              <Text fontSize="xs" color="gray.400">
+                Deck ({gameState.deckCount})
+              </Text>
+            </VStack>
+          </Tooltip>
 
           {/* Discard Pile */}
-          <VStack spacing={2}>
-            {topDiscard ? (
-              <Card card={topDiscard} />
-            ) : (
-              <Box
-                w="80px"
-                h="112px"
-                borderRadius="md"
-                border="2px dashed"
-                borderColor="gray.600"
-                display="flex"
-                alignItems="center"
-                justifyContent="center"
-              >
-                <Text fontSize="xs" color="gray.500">
-                  Empty
-                </Text>
-              </Box>
-            )}
-            <Text fontSize="xs" color="gray.400">
-              Discard
-            </Text>
-          </VStack>
+          <Tooltip
+            label={
+              canAct && turnData?.availableActions.includes('takeDiscard')
+                ? 'Take from discard'
+                : !canAct
+                  ? 'Not your turn'
+                  : ''
+            }
+            isDisabled={!canAct && gameState.phase !== 'playing'}
+          >
+            <VStack spacing={2}>
+              {topDiscard ? (
+                <Card
+                  card={topDiscard}
+                  isClickable={
+                    canAct && (turnData?.availableActions.includes('takeDiscard') ?? false)
+                  }
+                  onClick={handleTakeDiscard}
+                />
+              ) : (
+                <Box
+                  w="80px"
+                  h="112px"
+                  borderRadius="md"
+                  border="2px dashed"
+                  borderColor="gray.600"
+                  display="flex"
+                  alignItems="center"
+                  justifyContent="center"
+                >
+                  <Text fontSize="xs" color="gray.500">
+                    Empty
+                  </Text>
+                </Box>
+              )}
+              <Text fontSize="xs" color="gray.400">
+                Discard
+              </Text>
+            </VStack>
+          </Tooltip>
         </Flex>
 
-        {/* Bottom: Player's hand */}
+        {/* Bottom: Player's hand + actions */}
         <VStack spacing={3}>
           {/* Turn indicator */}
-          {gameState.players[gameState.currentTurnIndex]?.playerId === playerId ? (
+          {gameState.phase === 'peeking' ? (
+            <Text fontSize="sm" color="yellow.300" fontWeight="bold">
+              Memorizing...
+            </Text>
+          ) : gameState.players[gameState.currentTurnIndex]?.playerId === playerId ? (
             <Heading size="sm" color="yellow.300">
               Your Turn
             </Heading>
@@ -277,18 +382,35 @@ export const GameBoard: FC = () => {
               const peekedCard = getPeekedCardForSlot(h.slot);
               const showFaceUp = isPeekedSlot(h.slot) && peekedCard !== null;
               const visibleCard = showFaceUp ? peekedCard : h.card;
+              const burnAvailable =
+                canAct && (turnData?.availableActions.includes('burn') ?? false);
 
               return (
-                <VStack key={h.slot} spacing={1}>
-                  {visibleCard ? (
-                    <Card card={visibleCard} isSelected={isPeekedSlot(h.slot)} />
-                  ) : (
-                    <CardBack isSelected={isPeekedSlot(h.slot)} />
-                  )}
-                  <Badge colorScheme={isPeekedSlot(h.slot) ? 'yellow' : 'gray'} fontSize="xs">
-                    {h.slot}
-                  </Badge>
-                </VStack>
+                <Tooltip
+                  key={h.slot}
+                  label={burnAvailable ? 'Burn this card' : ''}
+                  isDisabled={!burnAvailable}
+                >
+                  <VStack spacing={1}>
+                    {visibleCard ? (
+                      <Card
+                        card={visibleCard}
+                        isSelected={isPeekedSlot(h.slot)}
+                        isClickable={burnAvailable}
+                        onClick={() => handleBurnCard(h.slot)}
+                      />
+                    ) : (
+                      <CardBack
+                        isSelected={isPeekedSlot(h.slot)}
+                        isClickable={burnAvailable}
+                        onClick={() => handleBurnCard(h.slot)}
+                      />
+                    )}
+                    <Badge colorScheme={isPeekedSlot(h.slot) ? 'yellow' : 'gray'} fontSize="xs">
+                      {h.slot}
+                    </Badge>
+                  </VStack>
+                </Tooltip>
               );
             })}
           </HStack>

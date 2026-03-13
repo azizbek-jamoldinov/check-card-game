@@ -10,11 +10,17 @@ import {
 } from 'react';
 import { useNavigate } from 'react-router-dom';
 import socket from '../services/socket';
-import type { ClientGameState, PeekedCard, RoomData } from '../types/game.types';
+import type { ClientGameState, PeekedCard, RoomData, ActionType } from '../types/game.types';
 
 // ============================================================
 // Types
 // ============================================================
+
+interface YourTurnData {
+  playerId: string;
+  canCheck: boolean;
+  availableActions: ActionType[];
+}
 
 interface SocketContextValue {
   isConnected: boolean;
@@ -23,10 +29,17 @@ interface SocketContextValue {
   roomData: RoomData | null;
   gameState: ClientGameState | null;
   peekedCards: PeekedCard[] | null;
+  isMyTurn: boolean;
+  turnData: YourTurnData | null;
   createRoom: (username: string) => Promise<{ success: boolean; error?: string }>;
   joinRoom: (roomCode: string, username: string) => Promise<{ success: boolean; error?: string }>;
   leaveRoom: () => void;
   startGame: () => Promise<{ success: boolean; error?: string }>;
+  endPeek: () => Promise<{ success: boolean; error?: string }>;
+  performAction: (
+    actionType: ActionType,
+    slot?: string,
+  ) => Promise<{ success: boolean; error?: string }>;
 }
 
 const SocketContext = createContext<SocketContextValue | null>(null);
@@ -47,6 +60,8 @@ export const SocketProvider: FC<SocketProviderProps> = ({ children }) => {
   const [roomData, setRoomData] = useState<RoomData | null>(null);
   const [gameState, setGameState] = useState<ClientGameState | null>(null);
   const [peekedCards, setPeekedCards] = useState<PeekedCard[] | null>(null);
+  const [isMyTurn, setIsMyTurn] = useState(false);
+  const [turnData, setTurnData] = useState<YourTurnData | null>(null);
 
   // Use a ref for navigate to avoid re-registering socket listeners
   const navigateRef = useRef(navigate);
@@ -78,7 +93,23 @@ export const SocketProvider: FC<SocketProviderProps> = ({ children }) => {
       console.log('Game started, peeked cards:', data.peekedCards);
       setGameState(data.gameState);
       setPeekedCards(data.peekedCards);
+      setIsMyTurn(false);
+      setTurnData(null);
       navigateRef.current('/game');
+    });
+
+    socket.on('gameStateUpdated', (data: ClientGameState) => {
+      console.log('Game state updated, phase:', data.phase);
+      setGameState(data);
+      // Reset turn state — will be re-set by 'yourTurn' if it's still our turn
+      setIsMyTurn(false);
+      setTurnData(null);
+    });
+
+    socket.on('yourTurn', (data: YourTurnData) => {
+      console.log('Your turn!', data);
+      setIsMyTurn(true);
+      setTurnData(data);
     });
 
     return () => {
@@ -87,6 +118,8 @@ export const SocketProvider: FC<SocketProviderProps> = ({ children }) => {
       socket.off('roomUpdated');
       socket.off('error');
       socket.off('gameStarted');
+      socket.off('gameStateUpdated');
+      socket.off('yourTurn');
       socket.disconnect();
     };
   }, []);
@@ -177,6 +210,52 @@ export const SocketProvider: FC<SocketProviderProps> = ({ children }) => {
     });
   }, [roomData, playerId]);
 
+  // ----------------------------------------------------------
+  // End Peek — transition from peeking to playing (F-031 → F-033)
+  // ----------------------------------------------------------
+  const endPeek = useCallback((): Promise<{ success: boolean; error?: string }> => {
+    return new Promise((resolve) => {
+      if (!roomData || !playerId) {
+        resolve({ success: false, error: 'Not in a room' });
+        return;
+      }
+      socket.emit(
+        'endPeek',
+        { roomCode: roomData.roomCode, playerId },
+        (response: { success: boolean; error?: string }) => {
+          setPeekedCards(null);
+          resolve(response);
+        },
+      );
+    });
+  }, [roomData, playerId]);
+
+  // ----------------------------------------------------------
+  // Perform Action — send a player action to the server (F-035)
+  // ----------------------------------------------------------
+  const performAction = useCallback(
+    (actionType: ActionType, slot?: string): Promise<{ success: boolean; error?: string }> => {
+      return new Promise((resolve) => {
+        if (!roomData || !playerId) {
+          resolve({ success: false, error: 'Not in a room' });
+          return;
+        }
+        const action: { type: ActionType; slot?: string } = { type: actionType };
+        if (slot) {
+          action.slot = slot;
+        }
+        socket.emit(
+          'playerAction',
+          { roomCode: roomData.roomCode, playerId, action },
+          (response: { success: boolean; error?: string }) => {
+            resolve(response);
+          },
+        );
+      });
+    },
+    [roomData, playerId],
+  );
+
   const value: SocketContextValue = {
     isConnected,
     playerId,
@@ -184,10 +263,14 @@ export const SocketProvider: FC<SocketProviderProps> = ({ children }) => {
     roomData,
     gameState,
     peekedCards,
+    isMyTurn,
+    turnData,
     createRoom,
     joinRoom,
     leaveRoom,
     startGame,
+    endPeek,
+    performAction,
   };
 
   return <SocketContext.Provider value={value}>{children}</SocketContext.Provider>;

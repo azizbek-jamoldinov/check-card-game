@@ -1,0 +1,248 @@
+import { describe, it, expect } from 'vitest';
+import {
+  validatePlayerTurn,
+  getAvailableActions,
+  advanceTurn,
+  isRoundOver,
+  transitionFromPeeking,
+  getCurrentTurnPlayerId,
+} from '../game/TurnManager';
+import { initializeGameState } from '../game/GameSetup';
+import type { GameState } from '../types/game.types';
+
+// ============================================================
+// Helpers
+// ============================================================
+
+function createPlayingGameState(playerCount = 4): GameState {
+  const players = Array.from({ length: playerCount }, (_, i) => ({
+    id: `p${i + 1}`,
+    username: `Player${i + 1}`,
+  }));
+  const gs = initializeGameState(players);
+  gs.phase = 'playing';
+  return gs;
+}
+
+// ============================================================
+// validatePlayerTurn (F-034)
+// ============================================================
+
+describe('validatePlayerTurn', () => {
+  it("returns null when it is the player's turn", () => {
+    const gs = createPlayingGameState();
+    const currentPlayerId = gs.players[gs.currentTurnIndex].playerId;
+    expect(validatePlayerTurn(gs, currentPlayerId)).toBeNull();
+  });
+
+  it("returns error when it is not the player's turn", () => {
+    const gs = createPlayingGameState();
+    // Pick a player who is NOT the current turn player
+    const otherIndex = (gs.currentTurnIndex + 1) % gs.players.length;
+    const otherPlayerId = gs.players[otherIndex].playerId;
+    expect(validatePlayerTurn(gs, otherPlayerId)).toBe('It is not your turn');
+  });
+
+  it('returns error when game is not in playing phase', () => {
+    const gs = createPlayingGameState();
+    gs.phase = 'peeking';
+    const currentPlayerId = gs.players[gs.currentTurnIndex].playerId;
+    expect(validatePlayerTurn(gs, currentPlayerId)).toBe('Game is not in playing phase');
+  });
+
+  it('returns error for dealing phase', () => {
+    const gs = createPlayingGameState();
+    gs.phase = 'dealing';
+    expect(validatePlayerTurn(gs, gs.players[0].playerId)).toBe('Game is not in playing phase');
+  });
+
+  it('returns error for roundEnd phase', () => {
+    const gs = createPlayingGameState();
+    gs.phase = 'roundEnd';
+    expect(validatePlayerTurn(gs, gs.players[0].playerId)).toBe('Game is not in playing phase');
+  });
+
+  it('returns error for gameEnd phase', () => {
+    const gs = createPlayingGameState();
+    gs.phase = 'gameEnd';
+    expect(validatePlayerTurn(gs, gs.players[0].playerId)).toBe('Game is not in playing phase');
+  });
+
+  it('returns error for unknown player ID', () => {
+    const gs = createPlayingGameState();
+    expect(validatePlayerTurn(gs, 'nonexistent')).toBe('It is not your turn');
+  });
+});
+
+// ============================================================
+// getAvailableActions (F-035)
+// ============================================================
+
+describe('getAvailableActions', () => {
+  it('returns all 3 actions when discard pile is non-empty', () => {
+    const gs = createPlayingGameState();
+    // initializeGameState already puts one card in the discard pile
+    expect(gs.discardPile.length).toBeGreaterThan(0);
+
+    const actions = getAvailableActions(gs);
+    expect(actions).toContain('drawDeck');
+    expect(actions).toContain('takeDiscard');
+    expect(actions).toContain('burn');
+    expect(actions).toHaveLength(3);
+  });
+
+  it('returns only drawDeck when discard pile is empty', () => {
+    const gs = createPlayingGameState();
+    gs.discardPile = [];
+
+    const actions = getAvailableActions(gs);
+    expect(actions).toEqual(['drawDeck']);
+  });
+
+  it('always includes drawDeck', () => {
+    const gs = createPlayingGameState();
+    gs.discardPile = [];
+    expect(getAvailableActions(gs)).toContain('drawDeck');
+
+    gs.discardPile = [gs.deck.pop()!];
+    expect(getAvailableActions(gs)).toContain('drawDeck');
+  });
+});
+
+// ============================================================
+// advanceTurn (F-033)
+// ============================================================
+
+describe('advanceTurn', () => {
+  it('advances to the next player', () => {
+    const gs = createPlayingGameState();
+    gs.currentTurnIndex = 0;
+
+    const nextIndex = advanceTurn(gs);
+    expect(nextIndex).toBe(1);
+    expect(gs.currentTurnIndex).toBe(1);
+  });
+
+  it('wraps around to 0 after the last player', () => {
+    const gs = createPlayingGameState(4);
+    gs.currentTurnIndex = 3;
+
+    const nextIndex = advanceTurn(gs);
+    expect(nextIndex).toBe(0);
+    expect(gs.currentTurnIndex).toBe(0);
+  });
+
+  it('works with 2 players', () => {
+    const gs = createPlayingGameState(2);
+    gs.currentTurnIndex = 0;
+
+    advanceTurn(gs);
+    expect(gs.currentTurnIndex).toBe(1);
+
+    advanceTurn(gs);
+    expect(gs.currentTurnIndex).toBe(0);
+  });
+
+  it('handles sequential advances correctly', () => {
+    const gs = createPlayingGameState(4);
+    gs.currentTurnIndex = 0;
+
+    advanceTurn(gs); // 0 -> 1
+    advanceTurn(gs); // 1 -> 2
+    advanceTurn(gs); // 2 -> 3
+    advanceTurn(gs); // 3 -> 0
+    expect(gs.currentTurnIndex).toBe(0);
+  });
+
+  it('returns 0 for empty player list', () => {
+    const gs = createPlayingGameState();
+    gs.players = [];
+    expect(advanceTurn(gs)).toBe(0);
+  });
+});
+
+// ============================================================
+// isRoundOver (F-064 prep)
+// ============================================================
+
+describe('isRoundOver', () => {
+  it('returns false when no one has called check', () => {
+    const gs = createPlayingGameState();
+    gs.checkCalledBy = null;
+    expect(isRoundOver(gs)).toBe(false);
+  });
+
+  it('returns true when turn returns to the checker', () => {
+    const gs = createPlayingGameState();
+    const checkerPlayerId = gs.players[2].playerId;
+    gs.checkCalledBy = checkerPlayerId;
+    gs.currentTurnIndex = 2; // back to the checker
+    expect(isRoundOver(gs)).toBe(true);
+  });
+
+  it('returns false when check called but turn is on another player', () => {
+    const gs = createPlayingGameState();
+    gs.checkCalledBy = gs.players[2].playerId;
+    gs.currentTurnIndex = 0; // not the checker
+    expect(isRoundOver(gs)).toBe(false);
+  });
+
+  it('returns false when check called but turn is on next player', () => {
+    const gs = createPlayingGameState();
+    gs.checkCalledBy = gs.players[0].playerId;
+    gs.currentTurnIndex = 1;
+    expect(isRoundOver(gs)).toBe(false);
+  });
+});
+
+// ============================================================
+// transitionFromPeeking
+// ============================================================
+
+describe('transitionFromPeeking', () => {
+  it('transitions from peeking to playing', () => {
+    const gs = createPlayingGameState();
+    gs.phase = 'peeking';
+    transitionFromPeeking(gs);
+    expect(gs.phase).toBe('playing');
+  });
+
+  it('does not change phase if already playing', () => {
+    const gs = createPlayingGameState();
+    gs.phase = 'playing';
+    transitionFromPeeking(gs);
+    expect(gs.phase).toBe('playing');
+  });
+
+  it('does not change phase if in roundEnd', () => {
+    const gs = createPlayingGameState();
+    gs.phase = 'roundEnd';
+    transitionFromPeeking(gs);
+    expect(gs.phase).toBe('roundEnd');
+  });
+});
+
+// ============================================================
+// getCurrentTurnPlayerId
+// ============================================================
+
+describe('getCurrentTurnPlayerId', () => {
+  it('returns the current player ID', () => {
+    const gs = createPlayingGameState();
+    const expected = gs.players[gs.currentTurnIndex].playerId;
+    expect(getCurrentTurnPlayerId(gs)).toBe(expected);
+  });
+
+  it('returns null for empty player list', () => {
+    const gs = createPlayingGameState();
+    gs.players = [];
+    expect(getCurrentTurnPlayerId(gs)).toBeNull();
+  });
+
+  it('returns correct player after advancing turn', () => {
+    const gs = createPlayingGameState();
+    gs.currentTurnIndex = 0;
+    advanceTurn(gs);
+    expect(getCurrentTurnPlayerId(gs)).toBe(gs.players[1].playerId);
+  });
+});

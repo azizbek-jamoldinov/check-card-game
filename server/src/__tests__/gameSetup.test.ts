@@ -169,7 +169,7 @@ describe('dealCards', () => {
 // ============================================================
 
 describe('selectInitialPeekSlots', () => {
-  it('returns exactly 2 slots', () => {
+  it('always returns slots C and D', () => {
     const player = createTestPlayer('p1', 'Alice', [
       makeCard('c1'),
       makeCard('c2'),
@@ -179,9 +179,10 @@ describe('selectInitialPeekSlots', () => {
 
     const slots = selectInitialPeekSlots(player);
     expect(slots).toHaveLength(2);
+    expect(slots.sort()).toEqual(['C', 'D']);
   });
 
-  it('returns valid slot labels from the player hand', () => {
+  it('returns a new array each time (not the same reference)', () => {
     const player = createTestPlayer('p1', 'Alice', [
       makeCard('c1'),
       makeCard('c2'),
@@ -189,63 +190,10 @@ describe('selectInitialPeekSlots', () => {
       makeCard('c4'),
     ]);
 
-    const validSlots = player.hand.map((h) => h.slot);
-    const slots = selectInitialPeekSlots(player);
-
-    for (const slot of slots) {
-      expect(validSlots).toContain(slot);
-    }
-  });
-
-  it('returns 2 different slots (no duplicates)', () => {
-    const player = createTestPlayer('p1', 'Alice', [
-      makeCard('c1'),
-      makeCard('c2'),
-      makeCard('c3'),
-      makeCard('c4'),
-    ]);
-
-    // Run multiple times to increase confidence
-    for (let i = 0; i < 20; i++) {
-      const slots = selectInitialPeekSlots(player);
-      expect(new Set(slots).size).toBe(2);
-    }
-  });
-
-  it('selects randomly (not always the same slots)', () => {
-    const player = createTestPlayer('p1', 'Alice', [
-      makeCard('c1'),
-      makeCard('c2'),
-      makeCard('c3'),
-      makeCard('c4'),
-    ]);
-
-    const results = new Set<string>();
-    for (let i = 0; i < 50; i++) {
-      const slots = selectInitialPeekSlots(player);
-      results.add(slots.sort().join(','));
-    }
-
-    // With 4 slots and 2 picks, there are C(4,2) = 6 possible combinations
-    // Over 50 runs, we should see more than 1 combination
-    expect(results.size).toBeGreaterThan(1);
-  });
-
-  it('handles a player with only 2 cards', () => {
-    const player: PlayerState = {
-      playerId: 'p1',
-      username: 'Alice',
-      hand: [
-        { slot: 'A', card: makeCard('c1') },
-        { slot: 'B', card: makeCard('c2') },
-      ],
-      peekedSlots: [],
-      totalScore: 0,
-    };
-
-    const slots = selectInitialPeekSlots(player);
-    expect(slots).toHaveLength(2);
-    expect(slots.sort()).toEqual(['A', 'B']);
+    const slots1 = selectInitialPeekSlots(player);
+    const slots2 = selectInitialPeekSlots(player);
+    expect(slots1).not.toBe(slots2);
+    expect(slots1).toEqual(slots2);
   });
 });
 
@@ -387,15 +335,12 @@ describe('initializeGameState', () => {
     expect(gs.deck).toHaveLength(35);
   });
 
-  it('assigns 2 peek slots per player', () => {
+  it('assigns peek slots C and D to each player', () => {
     const gs = initializeGameState(testPlayers);
 
     for (const player of gs.players) {
       expect(player.peekedSlots).toHaveLength(2);
-      const validSlots = player.hand.map((h) => h.slot);
-      for (const slot of player.peekedSlots) {
-        expect(validSlots).toContain(slot);
-      }
+      expect(player.peekedSlots.sort()).toEqual(['C', 'D']);
     }
   });
 
