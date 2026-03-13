@@ -38,12 +38,12 @@ Derived from PLAN.md. Features are grouped by domain and ordered by implementati
 
 ### 4. Deck & Card Engine
 
-- [ ] **F-022**: Initialize deck — create standard 52-card deck with correct values (red 10 = 0, ace = 1, face cards = 10)
-- [ ] **F-023**: Shuffle deck — Fisher-Yates shuffle
-- [ ] **F-024**: Draw from deck — remove and return top card
-- [ ] **F-025**: Draw from discard — take top visible card
-- [ ] **F-026**: Add to discard pile
-- [ ] **F-027**: Reshuffle discard into deck — when draw pile is empty, keep top discard card, shuffle rest into new draw pile
+- [x] **F-022**: Initialize deck — create standard 52-card deck with correct values (red 10 = 0, ace = 1, face cards = 10)
+- [x] **F-023**: Shuffle deck — Fisher-Yates shuffle
+- [x] **F-024**: Draw from deck — remove and return top card
+- [x] **F-025**: Draw from discard — take top visible card
+- [x] **F-026**: Add to discard pile
+- [x] **F-027**: Reshuffle discard into deck — when draw pile is empty, keep top discard card, shuffle rest into new draw pile
 
 ### 5. Game Setup & Initial Peek
 
