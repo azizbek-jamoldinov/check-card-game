@@ -28,6 +28,7 @@ function createTestGameState(overrides: Partial<GameState> = {}): GameState {
     drawnCard: null,
     drawnByPlayerId: null,
     drawnSource: null,
+    pendingEffect: null,
     ...overrides,
   };
 }

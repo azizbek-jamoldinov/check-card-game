@@ -1,9 +1,16 @@
 import { useEffect, useState, useCallback, FC } from 'react';
 import {
   Box,
+  Button,
   Flex,
   Grid,
   IconButton,
+  Modal,
+  ModalBody,
+  ModalContent,
+  ModalFooter,
+  ModalHeader,
+  ModalOverlay,
   Text,
   VStack,
   HStack,
@@ -129,9 +136,14 @@ export const GameBoard: FC = () => {
     turnData,
     drawnCard,
     drawnFromDiscard,
+    pendingEffect,
+    lastBurnResult,
     endPeek,
     performAction,
     discardChoice,
+    redJackSwap,
+    redQueenPeek,
+    redKingChoice,
     leaveRoom,
     debugPeek,
   } = useSocket();
@@ -198,6 +210,36 @@ export const GameBoard: FC = () => {
       socket.off('playerLeftGame', handler);
     };
   }, [toast]);
+
+  // Burn result toast notification (F-044 to F-048)
+  useEffect(() => {
+    if (!lastBurnResult) return;
+    const burnerName =
+      lastBurnResult.playerId === playerId
+        ? 'You'
+        : (gameState?.players.find((p) => p.playerId === lastBurnResult.playerId)?.username ??
+          'Someone');
+    if (lastBurnResult.burnSuccess) {
+      const c = lastBurnResult.burnedCard;
+      toast({
+        title: `${burnerName === 'You' ? 'Burn success!' : `${burnerName} burned a card!`}`,
+        description: c ? `${c.rank}${c.suit} removed from slot ${lastBurnResult.slot}` : undefined,
+        status: 'success',
+        duration: 2500,
+        position: 'top',
+      });
+    } else {
+      toast({
+        title: `${burnerName === 'You' ? 'Burn failed!' : `${burnerName} failed to burn`}`,
+        description: lastBurnResult.penaltySlot
+          ? `Penalty card added to slot ${lastBurnResult.penaltySlot}`
+          : 'Rank did not match',
+        status: 'error',
+        duration: 3000,
+        position: 'top',
+      });
+    }
+  }, [lastBurnResult, playerId, gameState?.players, toast]);
 
   // Peek countdown — when timer expires, call endPeek to transition to playing (F-031, F-033)
   useEffect(() => {
@@ -300,6 +342,137 @@ export const GameBoard: FC = () => {
     leaveRoom();
     navigate('/');
   }, [leaveRoom, navigate]);
+
+  // ----------------------------------------------------------
+  // Special Effect modal state
+  // ----------------------------------------------------------
+
+  // Red Jack state
+  const [jackMySlot, setJackMySlot] = useState<string | null>(null);
+  const [jackTargetPlayer, setJackTargetPlayer] = useState<string | null>(null);
+  const [jackTargetSlot, setJackTargetSlot] = useState<string | null>(null);
+  const [jackLoading, setJackLoading] = useState(false);
+
+  // Red Queen state
+  const [queenPeekedCard, setQueenPeekedCard] = useState<CardType | null>(null);
+  const [queenLoading, setQueenLoading] = useState(false);
+  const [queenPeekTimer, setQueenPeekTimer] = useState(false);
+
+  // Red King state
+  const [kingKeepIndex, setKingKeepIndex] = useState<0 | 1 | null>(null);
+  const [kingReplaceSlot, setKingReplaceSlot] = useState<string | null>(null);
+  const [kingReplaceSlots, setKingReplaceSlots] = useState<[string | null, string | null]>([
+    null,
+    null,
+  ]);
+  const [kingMode, setKingMode] = useState<'returnBoth' | 'keepOne' | 'keepBoth' | null>(null);
+  const [kingLoading, setKingLoading] = useState(false);
+
+  // Reset special effect state when pendingEffect changes
+  useEffect(() => {
+    if (!pendingEffect) {
+      setJackMySlot(null);
+      setJackTargetPlayer(null);
+      setJackTargetSlot(null);
+      setJackLoading(false);
+      setQueenPeekedCard(null);
+      setQueenLoading(false);
+      setQueenPeekTimer(false);
+      setKingKeepIndex(null);
+      setKingReplaceSlot(null);
+      setKingReplaceSlots([null, null]);
+      setKingMode(null);
+      setKingLoading(false);
+    }
+  }, [pendingEffect]);
+
+  // Red Jack: submit swap or skip
+  const handleJackSubmit = useCallback(
+    async (skip: boolean) => {
+      setJackLoading(true);
+      const result = await redJackSwap(
+        skip,
+        jackMySlot ?? undefined,
+        jackTargetPlayer ?? undefined,
+        jackTargetSlot ?? undefined,
+      );
+      setJackLoading(false);
+      if (!result.success && result.error) {
+        toast({ title: result.error, status: 'error', duration: 2000, position: 'top' });
+      }
+    },
+    [redJackSwap, jackMySlot, jackTargetPlayer, jackTargetSlot, toast],
+  );
+
+  // Red Queen: peek at a slot
+  const handleQueenPeek = useCallback(
+    async (slot: string) => {
+      setQueenLoading(true);
+      const result = await redQueenPeek(slot);
+      setQueenLoading(false);
+      if (result.success && result.card) {
+        setQueenPeekedCard(result.card);
+        setQueenPeekTimer(true);
+        // Auto-close after 3 seconds
+        setTimeout(() => {
+          setQueenPeekTimer(false);
+          setQueenPeekedCard(null);
+        }, 3000);
+      } else if (result.error) {
+        toast({ title: result.error, status: 'error', duration: 2000, position: 'top' });
+      }
+    },
+    [redQueenPeek, toast],
+  );
+
+  // Red King: submit choice
+  const handleKingSubmit = useCallback(async () => {
+    if (!kingMode) return;
+    setKingLoading(true);
+
+    let result: { success: boolean; error?: string };
+
+    if (kingMode === 'returnBoth') {
+      result = await redKingChoice({ type: 'returnBoth' });
+    } else if (kingMode === 'keepOne') {
+      if (kingKeepIndex === null || !kingReplaceSlot) {
+        setKingLoading(false);
+        toast({
+          title: 'Select a card to keep and a slot to replace',
+          status: 'warning',
+          duration: 2000,
+          position: 'top',
+        });
+        return;
+      }
+      result = await redKingChoice({
+        type: 'keepOne',
+        keepIndex: kingKeepIndex,
+        replaceSlot: kingReplaceSlot,
+      });
+    } else {
+      // keepBoth
+      if (!kingReplaceSlots[0] || !kingReplaceSlots[1]) {
+        setKingLoading(false);
+        toast({
+          title: 'Select 2 slots to replace',
+          status: 'warning',
+          duration: 2000,
+          position: 'top',
+        });
+        return;
+      }
+      result = await redKingChoice({
+        type: 'keepBoth',
+        replaceSlots: [kingReplaceSlots[0], kingReplaceSlots[1]],
+      });
+    }
+
+    setKingLoading(false);
+    if (!result.success && result.error) {
+      toast({ title: result.error, status: 'error', duration: 2000, position: 'top' });
+    }
+  }, [kingMode, kingKeepIndex, kingReplaceSlot, kingReplaceSlots, redKingChoice, toast]);
 
   if (!gameState || !playerId) {
     return null;
@@ -670,6 +843,364 @@ export const GameBoard: FC = () => {
           </Text>
         </VStack>
       </Grid>
+
+      {/* ============================================================ */}
+      {/* Red Jack Modal (F-049) — Blind swap with opponent             */}
+      {/* ============================================================ */}
+      <Modal
+        isOpen={pendingEffect?.effect === 'redJack'}
+        onClose={() => {}}
+        isCentered
+        closeOnOverlayClick={false}
+        closeOnEsc={false}
+        size={{ base: 'sm', md: 'md' }}
+      >
+        <ModalOverlay bg="blackAlpha.700" />
+        <ModalContent bg="gray.800" color="white">
+          <ModalHeader>
+            <HStack>
+              <Text>{'\u2666'}</Text>
+              <Text>Red Jack — Blind Swap</Text>
+            </HStack>
+            <Text fontSize="xs" color="gray.400" fontWeight="normal" mt={1}>
+              Swap one of your cards with an opponent&apos;s card (neither is revealed)
+            </Text>
+          </ModalHeader>
+          <ModalBody>
+            <VStack spacing={4} align="stretch">
+              {/* Your slots */}
+              <Box>
+                <Text fontSize="sm" fontWeight="bold" mb={2}>
+                  Your card:
+                </Text>
+                <HStack spacing={2} flexWrap="wrap">
+                  {myPlayer.hand.map((h) => (
+                    <Button
+                      key={h.slot}
+                      size="sm"
+                      variant={jackMySlot === h.slot ? 'solid' : 'outline'}
+                      colorScheme={jackMySlot === h.slot ? 'yellow' : 'gray'}
+                      onClick={() => setJackMySlot(h.slot)}
+                    >
+                      {h.slot}
+                    </Button>
+                  ))}
+                </HStack>
+              </Box>
+
+              {/* Opponent selection */}
+              <Box>
+                <Text fontSize="sm" fontWeight="bold" mb={2}>
+                  Target opponent:
+                </Text>
+                <HStack spacing={2} flexWrap="wrap">
+                  {opponents.map((opp) => (
+                    <Button
+                      key={opp.playerId}
+                      size="sm"
+                      variant={jackTargetPlayer === opp.playerId ? 'solid' : 'outline'}
+                      colorScheme={jackTargetPlayer === opp.playerId ? 'blue' : 'gray'}
+                      onClick={() => {
+                        setJackTargetPlayer(opp.playerId);
+                        setJackTargetSlot(null);
+                      }}
+                    >
+                      {opp.username}
+                    </Button>
+                  ))}
+                </HStack>
+              </Box>
+
+              {/* Target slot */}
+              {jackTargetPlayer && (
+                <Box>
+                  <Text fontSize="sm" fontWeight="bold" mb={2}>
+                    Target slot:
+                  </Text>
+                  <HStack spacing={2} flexWrap="wrap">
+                    {opponents
+                      .find((o) => o.playerId === jackTargetPlayer)
+                      ?.hand.map((h) => (
+                        <Button
+                          key={h.slot}
+                          size="sm"
+                          variant={jackTargetSlot === h.slot ? 'solid' : 'outline'}
+                          colorScheme={jackTargetSlot === h.slot ? 'blue' : 'gray'}
+                          onClick={() => setJackTargetSlot(h.slot)}
+                        >
+                          {h.slot}
+                        </Button>
+                      ))}
+                  </HStack>
+                </Box>
+              )}
+            </VStack>
+          </ModalBody>
+          <ModalFooter gap={3}>
+            <Button
+              variant="outline"
+              colorScheme="red"
+              onClick={() => handleJackSubmit(true)}
+              isLoading={jackLoading}
+            >
+              Skip
+            </Button>
+            <Button
+              colorScheme="green"
+              onClick={() => handleJackSubmit(false)}
+              isLoading={jackLoading}
+              isDisabled={!jackMySlot || !jackTargetPlayer || !jackTargetSlot}
+            >
+              Swap
+            </Button>
+          </ModalFooter>
+        </ModalContent>
+      </Modal>
+
+      {/* ============================================================ */}
+      {/* Red Queen Modal (F-050) — Peek at own card                    */}
+      {/* ============================================================ */}
+      <Modal
+        isOpen={pendingEffect?.effect === 'redQueen'}
+        onClose={() => {}}
+        isCentered
+        closeOnOverlayClick={false}
+        closeOnEsc={false}
+        size={{ base: 'sm', md: 'md' }}
+      >
+        <ModalOverlay bg="blackAlpha.700" />
+        <ModalContent bg="gray.800" color="white">
+          <ModalHeader>
+            <HStack>
+              <Text>{'\u2665'}</Text>
+              <Text>Red Queen — Peek</Text>
+            </HStack>
+            <Text fontSize="xs" color="gray.400" fontWeight="normal" mt={1}>
+              Peek at one of your own face-down cards
+            </Text>
+          </ModalHeader>
+          <ModalBody>
+            {queenPeekedCard ? (
+              <VStack spacing={3}>
+                <Text fontSize="sm" color="yellow.300" fontWeight="bold">
+                  Memorize this card! ({queenPeekTimer ? '3s' : '...'})
+                </Text>
+                <Box
+                  mx="auto"
+                  border="2px solid"
+                  borderColor="yellow.400"
+                  borderRadius="md"
+                  shadow="0 0 16px rgba(255, 214, 0, 0.4)"
+                >
+                  <Card card={queenPeekedCard} size="lg" />
+                </Box>
+              </VStack>
+            ) : (
+              <VStack spacing={3}>
+                <Text fontSize="sm" mb={2}>
+                  Select a slot to peek at:
+                </Text>
+                <HStack spacing={2} flexWrap="wrap" justify="center">
+                  {myPlayer.hand.map((h) => (
+                    <Button
+                      key={h.slot}
+                      size="md"
+                      variant="outline"
+                      colorScheme="purple"
+                      onClick={() => handleQueenPeek(h.slot)}
+                      isLoading={queenLoading}
+                    >
+                      {h.slot}
+                    </Button>
+                  ))}
+                </HStack>
+              </VStack>
+            )}
+          </ModalBody>
+          <ModalFooter />
+        </ModalContent>
+      </Modal>
+
+      {/* ============================================================ */}
+      {/* Red King Modal (F-051 to F-053) — Draw 2, choose action       */}
+      {/* ============================================================ */}
+      <Modal
+        isOpen={pendingEffect?.effect === 'redKing'}
+        onClose={() => {}}
+        isCentered
+        closeOnOverlayClick={false}
+        closeOnEsc={false}
+        size={{ base: 'sm', md: 'lg' }}
+      >
+        <ModalOverlay bg="blackAlpha.700" />
+        <ModalContent bg="gray.800" color="white">
+          <ModalHeader>
+            <HStack>
+              <Text>{'\u2666'}</Text>
+              <Text>Red King — Draw 2</Text>
+            </HStack>
+            <Text fontSize="xs" color="gray.400" fontWeight="normal" mt={1}>
+              You drew 2 cards. Choose what to do with them.
+            </Text>
+          </ModalHeader>
+          <ModalBody>
+            <VStack spacing={4} align="stretch">
+              {/* Show the 2 drawn cards */}
+              {pendingEffect?.redKingCards && (
+                <HStack spacing={4} justify="center">
+                  {pendingEffect.redKingCards.map((c, i) => (
+                    <VStack key={i} spacing={1}>
+                      <Box
+                        border="2px solid"
+                        borderColor={
+                          kingMode === 'keepOne' && kingKeepIndex === i ? 'yellow.400' : 'gray.500'
+                        }
+                        borderRadius="md"
+                        cursor={kingMode === 'keepOne' ? 'pointer' : 'default'}
+                        onClick={() => {
+                          if (kingMode === 'keepOne') setKingKeepIndex(i as 0 | 1);
+                        }}
+                        shadow={
+                          kingMode === 'keepOne' && kingKeepIndex === i
+                            ? '0 0 12px rgba(255, 214, 0, 0.4)'
+                            : 'none'
+                        }
+                      >
+                        <Card card={c} size="md" />
+                      </Box>
+                      <Badge
+                        colorScheme={
+                          kingMode === 'keepOne' && kingKeepIndex === i ? 'yellow' : 'gray'
+                        }
+                        fontSize="xs"
+                      >
+                        Card {i + 1}
+                      </Badge>
+                    </VStack>
+                  ))}
+                </HStack>
+              )}
+
+              {/* Mode selection */}
+              <HStack spacing={2} justify="center" flexWrap="wrap">
+                <Button
+                  size="sm"
+                  variant={kingMode === 'returnBoth' ? 'solid' : 'outline'}
+                  colorScheme={kingMode === 'returnBoth' ? 'red' : 'gray'}
+                  onClick={() => {
+                    setKingMode('returnBoth');
+                    setKingKeepIndex(null);
+                    setKingReplaceSlot(null);
+                    setKingReplaceSlots([null, null]);
+                  }}
+                >
+                  Return Both
+                </Button>
+                <Button
+                  size="sm"
+                  variant={kingMode === 'keepOne' ? 'solid' : 'outline'}
+                  colorScheme={kingMode === 'keepOne' ? 'yellow' : 'gray'}
+                  onClick={() => {
+                    setKingMode('keepOne');
+                    setKingKeepIndex(null);
+                    setKingReplaceSlot(null);
+                    setKingReplaceSlots([null, null]);
+                  }}
+                >
+                  Keep 1
+                </Button>
+                <Button
+                  size="sm"
+                  variant={kingMode === 'keepBoth' ? 'solid' : 'outline'}
+                  colorScheme={kingMode === 'keepBoth' ? 'green' : 'gray'}
+                  onClick={() => {
+                    setKingMode('keepBoth');
+                    setKingKeepIndex(null);
+                    setKingReplaceSlot(null);
+                    setKingReplaceSlots([null, null]);
+                  }}
+                >
+                  Keep Both
+                </Button>
+              </HStack>
+
+              {/* Keep One: select which drawn card + which hand slot */}
+              {kingMode === 'keepOne' && (
+                <VStack spacing={3} align="stretch">
+                  <Text fontSize="sm" color="gray.300">
+                    Click a drawn card above to select it, then pick a hand slot to replace:
+                  </Text>
+                  <HStack spacing={2} flexWrap="wrap">
+                    {myPlayer.hand.map((h) => (
+                      <Button
+                        key={h.slot}
+                        size="sm"
+                        variant={kingReplaceSlot === h.slot ? 'solid' : 'outline'}
+                        colorScheme={kingReplaceSlot === h.slot ? 'yellow' : 'gray'}
+                        onClick={() => setKingReplaceSlot(h.slot)}
+                      >
+                        {h.slot}
+                      </Button>
+                    ))}
+                  </HStack>
+                </VStack>
+              )}
+
+              {/* Keep Both: select 2 hand slots */}
+              {kingMode === 'keepBoth' && (
+                <VStack spacing={3} align="stretch">
+                  <Text fontSize="sm" color="gray.300">
+                    Select 2 hand slots to replace (Card 1 goes to first, Card 2 to second):
+                  </Text>
+                  <HStack spacing={2} flexWrap="wrap">
+                    {myPlayer.hand.map((h) => {
+                      const isFirst = kingReplaceSlots[0] === h.slot;
+                      const isSecond = kingReplaceSlots[1] === h.slot;
+                      const isSelected = isFirst || isSecond;
+                      return (
+                        <Button
+                          key={h.slot}
+                          size="sm"
+                          variant={isSelected ? 'solid' : 'outline'}
+                          colorScheme={isFirst ? 'green' : isSecond ? 'blue' : 'gray'}
+                          onClick={() => {
+                            if (isFirst) {
+                              setKingReplaceSlots([null, kingReplaceSlots[1]]);
+                            } else if (isSecond) {
+                              setKingReplaceSlots([kingReplaceSlots[0], null]);
+                            } else if (!kingReplaceSlots[0]) {
+                              setKingReplaceSlots([h.slot, kingReplaceSlots[1]]);
+                            } else if (!kingReplaceSlots[1]) {
+                              setKingReplaceSlots([kingReplaceSlots[0], h.slot]);
+                            }
+                          }}
+                        >
+                          {h.slot}
+                          {isFirst ? ' (1)' : isSecond ? ' (2)' : ''}
+                        </Button>
+                      );
+                    })}
+                  </HStack>
+                </VStack>
+              )}
+            </VStack>
+          </ModalBody>
+          <ModalFooter>
+            <Button
+              colorScheme="green"
+              onClick={handleKingSubmit}
+              isLoading={kingLoading}
+              isDisabled={
+                !kingMode ||
+                (kingMode === 'keepOne' && (kingKeepIndex === null || !kingReplaceSlot)) ||
+                (kingMode === 'keepBoth' && (!kingReplaceSlots[0] || !kingReplaceSlots[1]))
+              }
+            >
+              Confirm
+            </Button>
+          </ModalFooter>
+        </ModalContent>
+      </Modal>
     </Box>
   );
 };

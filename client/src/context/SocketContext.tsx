@@ -11,7 +11,15 @@ import {
 import { useNavigate } from 'react-router-dom';
 import socket from '../services/socket';
 import type { Card } from '../types/card.types';
-import type { ClientGameState, PeekedCard, RoomData, ActionType } from '../types/game.types';
+import type {
+  ClientGameState,
+  PeekedCard,
+  RoomData,
+  ActionType,
+  SpecialEffectType,
+  WaitingForSpecialEffectPayload,
+  BurnResultPayload,
+} from '../types/game.types';
 import type { SlotLabel } from '../types/player.types';
 
 // ============================================================
@@ -43,6 +51,10 @@ interface SocketContextValue {
   drawnCard: Card | null;
   /** True when the drawn card was taken from the discard pile (must swap, can't discard) */
   drawnFromDiscard: boolean;
+  /** Pending special effect data, or null if none (F-054) */
+  pendingEffect: WaitingForSpecialEffectPayload | null;
+  /** Last burn result received */
+  lastBurnResult: BurnResultPayload | null;
   createRoom: (username: string) => Promise<{ success: boolean; error?: string }>;
   joinRoom: (roomCode: string, username: string) => Promise<{ success: boolean; error?: string }>;
   leaveRoom: () => void;
@@ -54,6 +66,22 @@ interface SocketContextValue {
   ) => Promise<{ success: boolean; error?: string }>;
   /** After drawing from deck or taking from discard, choose to swap with a hand slot or discard the drawn card (F-038, F-042) */
   discardChoice: (slot: SlotLabel | null) => Promise<{ success: boolean; error?: string }>;
+  /** Red Jack: swap or skip (F-049) */
+  redJackSwap: (
+    skip: boolean,
+    mySlot?: string,
+    targetPlayerId?: string,
+    targetSlot?: string,
+  ) => Promise<{ success: boolean; error?: string }>;
+  /** Red Queen: peek at own slot (F-050) */
+  redQueenPeek: (slot: string) => Promise<{ success: boolean; card?: Card; error?: string }>;
+  /** Red King: choose what to do with 2 drawn cards (F-051) */
+  redKingChoice: (choice: {
+    type: 'returnBoth' | 'keepOne' | 'keepBoth';
+    keepIndex?: 0 | 1;
+    replaceSlot?: string;
+    replaceSlots?: [string, string];
+  }) => Promise<{ success: boolean; error?: string }>;
   /** Debug: peek at any player's card at a given slot */
   debugPeek: (
     targetPlayerId: string,
@@ -83,6 +111,8 @@ export const SocketProvider: FC<SocketProviderProps> = ({ children }) => {
   const [turnData, setTurnData] = useState<YourTurnData | null>(null);
   const [drawnCard, setDrawnCard] = useState<Card | null>(null);
   const [drawnFromDiscard, setDrawnFromDiscard] = useState(false);
+  const [pendingEffect, setPendingEffect] = useState<WaitingForSpecialEffectPayload | null>(null);
+  const [lastBurnResult, setLastBurnResult] = useState<BurnResultPayload | null>(null);
 
   // Use a ref for navigate to avoid re-registering socket listeners
   const navigateRef = useRef(navigate);
@@ -125,6 +155,8 @@ export const SocketProvider: FC<SocketProviderProps> = ({ children }) => {
       // Clear drawn card — turn has ended or state changed
       setDrawnCard(null);
       setDrawnFromDiscard(false);
+      // Clear burn result from previous turn
+      setLastBurnResult(null);
       // Reset turn state — will be re-set by 'yourTurn' if it's still our turn
       setIsMyTurn(false);
       setTurnData(null);
@@ -142,6 +174,28 @@ export const SocketProvider: FC<SocketProviderProps> = ({ children }) => {
       setDrawnFromDiscard(data.fromDiscard === true);
     });
 
+    socket.on('burnResult', (data: BurnResultPayload) => {
+      console.log('Burn result:', data.burnSuccess ? 'SUCCESS' : 'FAIL', data);
+      setLastBurnResult(data);
+    });
+
+    socket.on('waitingForSpecialEffect', (data: WaitingForSpecialEffectPayload) => {
+      console.log('Special effect triggered:', data.effect, data);
+      setPendingEffect(data);
+    });
+
+    socket.on('specialEffectResolved', (data: { effect: SpecialEffectType; playerId: string }) => {
+      console.log('Special effect resolved:', data.effect, data.playerId);
+      setPendingEffect(null);
+    });
+
+    socket.on(
+      'playerUsingSpecialEffect',
+      (data: { playerId: string; effect: SpecialEffectType }) => {
+        console.log(`Player ${data.playerId} is using ${data.effect} effect`);
+      },
+    );
+
     socket.on('playerLeftGame', (data: { username: string; gameEnded: boolean }) => {
       console.log(`Player ${data.username} left the game. Game ended: ${data.gameEnded}`);
       if (data.gameEnded) {
@@ -149,6 +203,8 @@ export const SocketProvider: FC<SocketProviderProps> = ({ children }) => {
         setPeekedCards(null);
         setDrawnCard(null);
         setDrawnFromDiscard(false);
+        setPendingEffect(null);
+        setLastBurnResult(null);
         setIsMyTurn(false);
         setTurnData(null);
         navigateRef.current('/');
@@ -164,6 +220,10 @@ export const SocketProvider: FC<SocketProviderProps> = ({ children }) => {
       socket.off('gameStateUpdated');
       socket.off('yourTurn');
       socket.off('cardDrawn');
+      socket.off('burnResult');
+      socket.off('waitingForSpecialEffect');
+      socket.off('specialEffectResolved');
+      socket.off('playerUsingSpecialEffect');
       socket.off('playerLeftGame');
       socket.disconnect();
     };
@@ -236,6 +296,8 @@ export const SocketProvider: FC<SocketProviderProps> = ({ children }) => {
     setPeekedCards(null);
     setDrawnCard(null);
     setDrawnFromDiscard(false);
+    setPendingEffect(null);
+    setLastBurnResult(null);
   }, [roomData, playerId]);
 
   // ----------------------------------------------------------
@@ -328,6 +390,98 @@ export const SocketProvider: FC<SocketProviderProps> = ({ children }) => {
   );
 
   // ----------------------------------------------------------
+  // Red Jack Swap — swap or skip (F-049)
+  // ----------------------------------------------------------
+  const redJackSwap = useCallback(
+    (
+      skip: boolean,
+      mySlot?: string,
+      targetPlayerId?: string,
+      targetSlot?: string,
+    ): Promise<{ success: boolean; error?: string }> => {
+      return new Promise((resolve) => {
+        if (!roomData || !playerId) {
+          resolve({ success: false, error: 'Not in a room' });
+          return;
+        }
+        socket.emit(
+          'redJackSwap',
+          {
+            roomCode: roomData.roomCode,
+            playerId,
+            skip,
+            mySlot,
+            targetPlayerId,
+            targetSlot,
+          },
+          (response: { success: boolean; error?: string }) => {
+            if (response.success) {
+              setPendingEffect(null);
+            }
+            resolve(response);
+          },
+        );
+      });
+    },
+    [roomData, playerId],
+  );
+
+  // ----------------------------------------------------------
+  // Red Queen Peek — peek at own slot (F-050)
+  // ----------------------------------------------------------
+  const redQueenPeek = useCallback(
+    (slot: string): Promise<{ success: boolean; card?: Card; error?: string }> => {
+      return new Promise((resolve) => {
+        if (!roomData || !playerId) {
+          resolve({ success: false, error: 'Not in a room' });
+          return;
+        }
+        socket.emit(
+          'redQueenPeek',
+          { roomCode: roomData.roomCode, playerId, slot },
+          (response: { success: boolean; card?: Card; error?: string }) => {
+            if (response.success) {
+              setPendingEffect(null);
+            }
+            resolve(response);
+          },
+        );
+      });
+    },
+    [roomData, playerId],
+  );
+
+  // ----------------------------------------------------------
+  // Red King Choice — choose what to do with 2 drawn cards (F-051)
+  // ----------------------------------------------------------
+  const redKingChoice = useCallback(
+    (choice: {
+      type: 'returnBoth' | 'keepOne' | 'keepBoth';
+      keepIndex?: 0 | 1;
+      replaceSlot?: string;
+      replaceSlots?: [string, string];
+    }): Promise<{ success: boolean; error?: string }> => {
+      return new Promise((resolve) => {
+        if (!roomData || !playerId) {
+          resolve({ success: false, error: 'Not in a room' });
+          return;
+        }
+        socket.emit(
+          'redKingChoice',
+          { roomCode: roomData.roomCode, playerId, choice },
+          (response: { success: boolean; error?: string }) => {
+            if (response.success) {
+              setPendingEffect(null);
+            }
+            resolve(response);
+          },
+        );
+      });
+    },
+    [roomData, playerId],
+  );
+
+  // ----------------------------------------------------------
   // Debug Peek — reveal any card (debug only)
   // ----------------------------------------------------------
   const debugPeek = useCallback(
@@ -363,6 +517,8 @@ export const SocketProvider: FC<SocketProviderProps> = ({ children }) => {
     turnData,
     drawnCard,
     drawnFromDiscard,
+    pendingEffect,
+    lastBurnResult,
     createRoom,
     joinRoom,
     leaveRoom,
@@ -370,6 +526,9 @@ export const SocketProvider: FC<SocketProviderProps> = ({ children }) => {
     endPeek,
     performAction,
     discardChoice,
+    redJackSwap,
+    redQueenPeek,
+    redKingChoice,
     debugPeek,
   };
 

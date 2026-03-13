@@ -132,6 +132,7 @@ export function initializeGameState(
     drawnCard: null,
     drawnByPlayerId: null,
     drawnSource: null,
+    pendingEffect: null,
   };
 
   // Deal 4 cards to each player (F-028)

@@ -39,6 +39,16 @@ const PlayerStateSchema = new Schema<PlayerState>(
   { _id: false },
 );
 
+const PendingEffectSchema = new Schema(
+  {
+    type: { type: String, required: true, enum: ['redJack', 'redQueen', 'redKing'] },
+    playerId: { type: String, required: true },
+    card: { type: CardSchema, required: true },
+    redKingCards: { type: [CardSchema], default: undefined },
+  },
+  { _id: false },
+);
+
 const GameStateSchema = new Schema<GameState>(
   {
     deck: { type: [CardSchema], required: true, default: [] },
@@ -58,6 +68,7 @@ const GameStateSchema = new Schema<GameState>(
     drawnCard: { type: CardSchema, default: null },
     drawnByPlayerId: { type: String, default: null },
     drawnSource: { type: String, enum: ['deck', 'discard', null], default: null },
+    pendingEffect: { type: PendingEffectSchema, default: null },
   },
   { _id: false },
 );

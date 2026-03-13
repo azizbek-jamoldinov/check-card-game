@@ -67,3 +67,36 @@ export interface PeekedCard {
 }
 
 export type SpecialEffectType = 'redJack' | 'redQueen' | 'redKing';
+
+// ============================================================
+// Burn Result (F-044 to F-048)
+// ============================================================
+
+export interface BurnResultPayload {
+  playerId: string;
+  slot: string;
+  burnSuccess: boolean;
+  /** Card revealed to all on success */
+  burnedCard?: Card;
+  /** Penalty slot added on failure */
+  penaltySlot?: string;
+}
+
+// ============================================================
+// Special Effect Payloads (F-049 to F-054)
+// ============================================================
+
+export interface WaitingForSpecialEffectPayload {
+  playerId: string;
+  effect: SpecialEffectType;
+  card: Card;
+  redKingCards?: [Card, Card];
+}
+
+export interface SpecialEffectResolvedPayload {
+  effect: SpecialEffectType;
+  playerId: string;
+  skipped?: boolean;
+  cardsKept?: number;
+  discardedCards?: Card[];
+}

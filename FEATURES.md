@@ -75,20 +75,20 @@ Derived from PLAN.md. Features are grouped by domain and ordered by implementati
 
 ### 9. Action: Burn a Card
 
-- [ ] **F-044**: Player selects hand slot to attempt burn
-- [ ] **F-045**: Server validates rank match against top discard card (number = exact, face = exact face, suit irrelevant)
-- [ ] **F-046**: Burn success — card removed from hand to discard pile, hand shrinks
-- [ ] **F-047**: Burn failure — card stays in hand, penalty card drawn face-down (player does NOT see it)
-- [ ] **F-048**: No special effects trigger from burns
+- [x] **F-044**: Player selects hand slot to attempt burn
+- [x] **F-045**: Server validates rank match against top discard card (number = exact, face = exact face, suit irrelevant)
+- [x] **F-046**: Burn success — card removed from hand to discard pile, hand shrinks
+- [x] **F-047**: Burn failure — card stays in hand, penalty card drawn face-down (player does NOT see it)
+- [x] **F-048**: No special effects trigger from burns
 
 ### 10. Special Effects (Red Face Cards)
 
-- [ ] **F-049**: Red Jack — optional blind swap of one own card with one opponent card; neither player sees swapped cards
-- [ ] **F-050**: Red Queen — peek at one of own face-down cards (private reveal)
-- [ ] **F-051**: Red King — draw 2 additional cards privately; choose to return both, keep 1 (discard 1 from hand), or keep 2 (discard 2 from hand)
-- [ ] **F-052**: Red King choice uses indices (0/1) to identify drawn cards — server resolves, never trust client card data
-- [ ] **F-053**: Return-to-deck cards shuffled back into random positions
-- [ ] **F-054**: `waitingForSpecialEffect` event — pauses game for effect resolution
+- [x] **F-049**: Red Jack — optional blind swap of one own card with one opponent card; neither player sees swapped cards
+- [x] **F-050**: Red Queen — peek at one of own face-down cards (private reveal)
+- [x] **F-051**: Red King — draw 2 additional cards privately; choose to return both, keep 1 (discard 1 from hand), or keep 2 (discard 2 from hand)
+- [x] **F-052**: Red King choice uses indices (0/1) to identify drawn cards — server resolves, never trust client card data
+- [x] **F-053**: Return-to-deck cards shuffled back into random positions
+- [x] **F-054**: `waitingForSpecialEffect` event — pauses game for effect resolution
 
 ### 11. Hand Management
 

@@ -44,6 +44,14 @@ export interface PlayerState {
 
 export type GamePhase = 'dealing' | 'peeking' | 'playing' | 'roundEnd' | 'gameEnd';
 
+export interface PendingEffect {
+  type: SpecialEffectType;
+  playerId: string;
+  card: Card;
+  /** For Red King: the 2 cards drawn from deck */
+  redKingCards?: [Card, Card];
+}
+
 export interface GameState {
   deck: Card[];
   discardPile: Card[];
@@ -60,6 +68,8 @@ export interface GameState {
   drawnByPlayerId: string | null;
   /** Where the pending card came from — determines swap rules and special effects (F-041) */
   drawnSource: 'deck' | 'discard' | null;
+  /** Pending special effect awaiting player resolution (F-054) */
+  pendingEffect: PendingEffect | null;
 }
 
 // ============================================================
