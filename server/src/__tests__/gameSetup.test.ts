@@ -487,7 +487,7 @@ describe('sanitizeGameState', () => {
     expect((client as unknown as Record<string, unknown>).deck).toBeUndefined();
   });
 
-  it('shows own cards to the requesting player', () => {
+  it('hides own cards from the requesting player (all cards face-down)', () => {
     const gs = createFullGameState();
     const client = sanitizeGameState(gs, 'p1');
 
@@ -495,10 +495,7 @@ describe('sanitizeGameState', () => {
     expect(me).toBeDefined();
 
     for (const h of me!.hand) {
-      expect(h.card).not.toBeNull();
-      expect(h.card!.id).toBeDefined();
-      expect(h.card!.rank).toBeDefined();
-      expect(h.card!.suit).toBeDefined();
+      expect(h.card).toBeNull();
     }
   });
 
@@ -561,22 +558,29 @@ describe('sanitizeGameState', () => {
     }
   });
 
-  it('returns different views for different players', () => {
+  it('returns identical card visibility for all players (all cards hidden)', () => {
     const gs = createFullGameState();
 
     const viewP1 = sanitizeGameState(gs, 'p1');
     const viewP2 = sanitizeGameState(gs, 'p2');
 
-    // P1's view: own cards visible
+    // P1's view: own cards hidden
     const p1InP1View = viewP1.players.find((p) => p.playerId === 'p1');
-    expect(p1InP1View!.hand[0].card).not.toBeNull();
+    expect(p1InP1View!.hand[0].card).toBeNull();
 
     // P2's view: P1's cards hidden
     const p1InP2View = viewP2.players.find((p) => p.playerId === 'p1');
     expect(p1InP2View!.hand[0].card).toBeNull();
 
-    // P2's view: own cards visible
+    // P2's view: own cards hidden
     const p2InP2View = viewP2.players.find((p) => p.playerId === 'p2');
-    expect(p2InP2View!.hand[0].card).not.toBeNull();
+    expect(p2InP2View!.hand[0].card).toBeNull();
+
+    // All cards null across both views
+    for (const p of viewP1.players) {
+      for (const h of p.hand) {
+        expect(h.card).toBeNull();
+      }
+    }
   });
 });

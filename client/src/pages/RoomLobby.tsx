@@ -13,7 +13,7 @@ import {
 } from '@chakra-ui/react';
 import { useSocket } from '../context/SocketContext';
 
-const MIN_PLAYERS = 4;
+const MIN_PLAYERS = 2;
 const MAX_PLAYERS = 6;
 
 export const RoomLobby: FC = () => {

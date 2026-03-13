@@ -358,9 +358,9 @@ describe('roomHandlers', () => {
       );
     });
 
-    it('rejects when fewer than 4 players', async () => {
-      // Remove players to have only 3
-      rooms[roomCode].players.splice(1, 2);
+    it('rejects when fewer than 2 players', async () => {
+      // Remove players to have only 1 (the host)
+      rooms[roomCode].players.splice(1);
 
       const callback = vi.fn();
       await emitEvent('startGame', { roomCode, playerId: hostId }, callback);
@@ -368,7 +368,7 @@ describe('roomHandlers', () => {
       expect(callback).toHaveBeenCalledWith(
         expect.objectContaining({
           success: false,
-          error: 'Need at least 4 players to start',
+          error: 'Need at least 2 players to start',
         }),
       );
     });

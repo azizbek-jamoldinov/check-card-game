@@ -174,16 +174,14 @@ export function initializeGameState(
  * - The requesting player can see their own cards.
  * - All other players' cards are null (hidden).
  */
-export function sanitizeGameState(gameState: GameState, forPlayerId: string): ClientGameState {
+export function sanitizeGameState(gameState: GameState, _forPlayerId: string): ClientGameState {
   const players: ClientPlayerState[] = gameState.players.map((p) => {
-    const isMe = p.playerId === forPlayerId;
-
     return {
       playerId: p.playerId,
       username: p.username,
       hand: p.hand.map((h: HandSlot) => ({
         slot: h.slot,
-        card: isMe ? h.card : null,
+        card: null, // All cards are face-down; visibility is handled via peek/reveal events
       })),
       cardCount: p.hand.length,
       totalScore: p.totalScore,

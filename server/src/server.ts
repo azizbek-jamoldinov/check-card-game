@@ -10,13 +10,15 @@ import healthRouter from './routes/health';
 import { registerSocketHandlers } from './socket';
 
 const PORT = process.env.PORT || 3001;
-const CLIENT_URL = process.env.CLIENT_URL || 'http://localhost:5173';
+
+// In development, allow connections from any origin so LAN devices (phones) can connect.
+const CORS_ORIGIN = process.env.CLIENT_URL || true;
 
 const app = express();
 const server = http.createServer(app);
 
 // Middleware
-app.use(cors({ origin: CLIENT_URL, credentials: true }));
+app.use(cors({ origin: CORS_ORIGIN, credentials: true }));
 app.use(express.json());
 
 // REST routes
@@ -25,7 +27,7 @@ app.use('/api', healthRouter);
 // Socket.io setup
 const io = new SocketIOServer(server, {
   cors: {
-    origin: CLIENT_URL,
+    origin: CORS_ORIGIN,
     methods: ['GET', 'POST'],
     credentials: true,
   },
@@ -41,7 +43,7 @@ async function startServer() {
     await connectDB();
     server.listen(PORT, () => {
       console.log(`Server running on port ${PORT}`);
-      console.log(`Client URL: ${CLIENT_URL}`);
+      console.log(`CORS origin: ${CORS_ORIGIN === true ? 'all origins (dev mode)' : CORS_ORIGIN}`);
     });
   } catch (error) {
     console.error('Failed to start server:', error);

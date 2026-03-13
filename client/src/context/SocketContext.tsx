@@ -99,10 +99,19 @@ export const SocketProvider: FC<SocketProviderProps> = ({ children }) => {
       socket.emit(
         'createRoom',
         { username: name },
-        (response: { success: boolean; roomCode?: string; playerId?: string; error?: string }) => {
+        (response: {
+          success: boolean;
+          roomCode?: string;
+          playerId?: string;
+          room?: RoomData;
+          error?: string;
+        }) => {
           if (response.success && response.playerId && response.roomCode) {
             setPlayerId(response.playerId);
             setUsername(name);
+            if (response.room) {
+              setRoomData(response.room);
+            }
           }
           resolve({ success: response.success, error: response.error });
         },

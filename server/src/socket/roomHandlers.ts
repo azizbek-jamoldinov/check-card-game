@@ -13,7 +13,7 @@ import { registerPlayer, unregisterPlayer, getSocketByPlayer } from './playerMap
 // Constants
 // ============================================================
 
-const MIN_PLAYERS = 4;
+const MIN_PLAYERS = 2;
 const MAX_PLAYERS = 6;
 
 // ============================================================
@@ -53,6 +53,14 @@ export function registerRoomHandlers(io: SocketIOServer, socket: Socket): void {
         success: boolean;
         roomCode?: string;
         playerId?: string;
+        room?: {
+          roomCode: string;
+          host: string;
+          players: { id: string; username: string }[];
+          status: string;
+          maxPlayers: number;
+          minPlayers: number;
+        };
         error?: string;
       }) => void,
     ) => {
@@ -93,7 +101,19 @@ export function registerRoomHandlers(io: SocketIOServer, socket: Socket): void {
 
         console.log(`Room ${roomCode} created by ${username} (${playerId})`);
 
-        callback?.({ success: true, roomCode, playerId });
+        callback?.({
+          success: true,
+          roomCode,
+          playerId,
+          room: {
+            roomCode: room.roomCode,
+            host: room.host,
+            players: room.players.map((p) => ({ id: p.id, username: p.username })),
+            status: room.status,
+            maxPlayers: MAX_PLAYERS,
+            minPlayers: MIN_PLAYERS,
+          },
+        });
         await broadcastRoomUpdate(io, roomCode);
       } catch (error) {
         console.error('Error creating room:', error);

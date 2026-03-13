@@ -5,6 +5,7 @@ import { useSocket } from '../context/SocketContext';
 
 export const HomePage: FC = () => {
   const [username, setUsername] = useState('');
+  const [usernameConfirmed, setUsernameConfirmed] = useState(false);
   const [roomCode, setRoomCode] = useState('');
   const [isCreating, setIsCreating] = useState(false);
   const [isJoining, setIsJoining] = useState(false);
@@ -13,15 +14,17 @@ export const HomePage: FC = () => {
   const navigate = useNavigate();
   const toast = useToast();
 
-  const handleCreateRoom = async () => {
-    const trimmed = username.trim();
-    if (!trimmed) {
+  const handleConfirmUsername = () => {
+    if (!username.trim()) {
       toast({ title: 'Enter a username', status: 'warning', duration: 2000, position: 'top' });
       return;
     }
+    setUsernameConfirmed(true);
+  };
 
+  const handleCreateRoom = async () => {
     setIsCreating(true);
-    const result = await createRoom(trimmed);
+    const result = await createRoom(username.trim());
     setIsCreating(false);
 
     if (result.success) {
@@ -38,20 +41,14 @@ export const HomePage: FC = () => {
   };
 
   const handleJoinRoom = async () => {
-    const trimmedName = username.trim();
     const trimmedCode = roomCode.trim().toUpperCase();
-
-    if (!trimmedName) {
-      toast({ title: 'Enter a username', status: 'warning', duration: 2000, position: 'top' });
-      return;
-    }
     if (!trimmedCode) {
       toast({ title: 'Enter a room code', status: 'warning', duration: 2000, position: 'top' });
       return;
     }
 
     setIsJoining(true);
-    const result = await joinRoom(trimmedCode, trimmedName);
+    const result = await joinRoom(trimmedCode, username.trim());
     setIsJoining(false);
 
     if (result.success) {
@@ -84,7 +81,7 @@ export const HomePage: FC = () => {
             Check Card Game
           </Heading>
           <Text fontSize="md" color="gray.400" textAlign="center">
-            A multiplayer card game for 4-6 players
+            A multiplayer card game
           </Text>
         </VStack>
 
@@ -96,84 +93,119 @@ export const HomePage: FC = () => {
           </Text>
         </HStack>
 
-        {/* Username input */}
-        <VStack spacing={4} w="100%">
-          <Input
-            placeholder="Enter your username"
-            value={username}
-            onChange={(e) => setUsername(e.target.value)}
-            maxLength={20}
-            size="lg"
-            bg="gray.800"
-            border="1px solid"
-            borderColor="gray.600"
-            _hover={{ borderColor: 'gray.500' }}
-            _focus={{
-              borderColor: 'brand.400',
-              boxShadow: '0 0 0 1px var(--chakra-colors-brand-400)',
-            }}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') handleCreateRoom();
-            }}
-          />
+        {!usernameConfirmed ? (
+          /* Step 1: Username entry */
+          <VStack spacing={4} w="100%">
+            <Input
+              placeholder="Enter your username"
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              maxLength={20}
+              size="lg"
+              bg="gray.800"
+              border="1px solid"
+              borderColor="gray.600"
+              _hover={{ borderColor: 'gray.500' }}
+              _focus={{
+                borderColor: 'brand.400',
+                boxShadow: '0 0 0 1px var(--chakra-colors-brand-400)',
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') handleConfirmUsername();
+              }}
+              autoFocus
+            />
+            <Button
+              colorScheme="green"
+              size="lg"
+              w="100%"
+              onClick={handleConfirmUsername}
+              isDisabled={!isConnected || !username.trim()}
+            >
+              Continue
+            </Button>
+          </VStack>
+        ) : (
+          /* Step 2: Create or Join */
+          <VStack spacing={6} w="100%">
+            {/* Greeting */}
+            <HStack spacing={2}>
+              <Text fontSize="md" color="gray.400">
+                Welcome,
+              </Text>
+              <Text fontSize="md" fontWeight="bold" color="brand.300">
+                {username.trim()}
+              </Text>
+              <Button
+                variant="link"
+                size="sm"
+                color="gray.500"
+                onClick={() => setUsernameConfirmed(false)}
+                _hover={{ color: 'gray.300' }}
+              >
+                (change)
+              </Button>
+            </HStack>
 
-          {/* Create Room */}
-          <Button
-            colorScheme="green"
-            size="lg"
-            w="100%"
-            onClick={handleCreateRoom}
-            isLoading={isCreating}
-            isDisabled={!isConnected || !username.trim()}
-          >
-            Create Room
-          </Button>
-        </VStack>
+            {/* Create Room */}
+            <Button
+              colorScheme="green"
+              size="lg"
+              w="100%"
+              onClick={handleCreateRoom}
+              isLoading={isCreating}
+              isDisabled={!isConnected}
+            >
+              Create Room
+            </Button>
 
-        {/* Divider */}
-        <HStack w="100%" spacing={4}>
-          <Box flex={1} h="1px" bg="gray.600" />
-          <Text fontSize="sm" color="gray.500">
-            OR
-          </Text>
-          <Box flex={1} h="1px" bg="gray.600" />
-        </HStack>
+            {/* Divider */}
+            <HStack w="100%" spacing={4}>
+              <Box flex={1} h="1px" bg="gray.600" />
+              <Text fontSize="sm" color="gray.500">
+                OR
+              </Text>
+              <Box flex={1} h="1px" bg="gray.600" />
+            </HStack>
 
-        {/* Join Room */}
-        <VStack spacing={4} w="100%">
-          <Input
-            placeholder="Enter room code"
-            value={roomCode}
-            onChange={(e) => setRoomCode(e.target.value.toUpperCase())}
-            maxLength={6}
-            size="lg"
-            bg="gray.800"
-            border="1px solid"
-            borderColor="gray.600"
-            textTransform="uppercase"
-            letterSpacing="wider"
-            textAlign="center"
-            fontWeight="bold"
-            _hover={{ borderColor: 'gray.500' }}
-            _focus={{
-              borderColor: 'brand.400',
-              boxShadow: '0 0 0 1px var(--chakra-colors-brand-400)',
-            }}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') handleJoinRoom();
-            }}
-          />
-          <Button
-            colorScheme="blue"
-            size="lg"
-            w="100%"
-            onClick={handleJoinRoom}
-            isLoading={isJoining}
-            isDisabled={!isConnected || !username.trim() || !roomCode.trim()}
-          >
-            Join Room
-          </Button>
-        </VStack>
+            {/* Join Room */}
+            <VStack spacing={4} w="100%">
+              <Input
+                placeholder="Enter room code"
+                value={roomCode}
+                onChange={(e) => setRoomCode(e.target.value.toUpperCase())}
+                maxLength={6}
+                size="lg"
+                bg="gray.800"
+                border="1px solid"
+                borderColor="gray.600"
+                textTransform="uppercase"
+                letterSpacing="wider"
+                textAlign="center"
+                fontWeight="bold"
+                _hover={{ borderColor: 'gray.500' }}
+                _focus={{
+                  borderColor: 'brand.400',
+                  boxShadow: '0 0 0 1px var(--chakra-colors-brand-400)',
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') handleJoinRoom();
+                }}
+                autoFocus
+              />
+              <Button
+                colorScheme="blue"
+                size="lg"
+                w="100%"
+                onClick={handleJoinRoom}
+                isLoading={isJoining}
+                isDisabled={!isConnected || !roomCode.trim()}
+              >
+                Join Room
+              </Button>
+            </VStack>
+          </VStack>
+        )}
       </VStack>
     </Box>
   );

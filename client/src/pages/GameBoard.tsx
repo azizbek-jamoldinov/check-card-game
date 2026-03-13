@@ -2,7 +2,9 @@ import { useEffect, useState, useCallback, FC } from 'react';
 import { Box, Flex, Grid, Text, VStack, HStack, Badge, Heading, Progress } from '@chakra-ui/react';
 import { useNavigate } from 'react-router-dom';
 import { useSocket } from '../context/SocketContext';
-import type { Card } from '../types/card.types';
+import { Card } from '../components/cards/Card';
+import { CardBack } from '../components/cards/CardBack';
+import type { Card as CardType } from '../types/card.types';
 import type { ClientHandSlot, ClientPlayerState } from '../types/player.types';
 import type { PeekedCard } from '../types/game.types';
 
@@ -10,96 +12,8 @@ import type { PeekedCard } from '../types/game.types';
 // Constants
 // ============================================================
 
-const CARD_WIDTH = { base: '60px', md: '80px', lg: '100px' };
-const CARD_HEIGHT = { base: '84px', md: '112px', lg: '140px' };
-const PEEK_DURATION_MS = 3000;
+const PEEK_DURATION_MS = 8000;
 const PEEK_TICK_MS = 100;
-
-// ============================================================
-// Sub-components
-// ============================================================
-
-interface CardDisplayProps {
-  card: Card | null;
-  faceUp: boolean;
-  isHighlighted?: boolean;
-  slot?: string;
-  onClick?: () => void;
-}
-
-const CardDisplay: FC<CardDisplayProps> = ({
-  card,
-  faceUp,
-  isHighlighted = false,
-  slot,
-  onClick,
-}) => {
-  if (faceUp && card) {
-    return (
-      <VStack spacing={1}>
-        <Box
-          w={CARD_WIDTH}
-          h={CARD_HEIGHT}
-          borderRadius="md"
-          border="2px solid"
-          borderColor={isHighlighted ? 'card.selected' : 'gray.600'}
-          bg="white"
-          color={card.isRed ? 'card.red' : 'card.black'}
-          display="flex"
-          flexDirection="column"
-          alignItems="center"
-          justifyContent="center"
-          cursor={onClick ? 'pointer' : 'default'}
-          transition="all 0.3s ease-in-out"
-          shadow={isHighlighted ? '0 0 12px rgba(255, 214, 0, 0.5)' : 'sm'}
-          onClick={onClick}
-          aria-label={`${card.rank} of ${card.suit}`}
-        >
-          <Text fontSize={{ base: 'md', md: 'lg' }} fontWeight="bold">
-            {card.rank}
-          </Text>
-          <Text fontSize={{ base: 'lg', md: 'xl' }}>{card.suit}</Text>
-        </Box>
-        {slot && (
-          <Badge colorScheme={isHighlighted ? 'yellow' : 'gray'} fontSize="xs">
-            {slot}
-          </Badge>
-        )}
-      </VStack>
-    );
-  }
-
-  // Face-down card (card back)
-  return (
-    <VStack spacing={1}>
-      <Box
-        w={CARD_WIDTH}
-        h={CARD_HEIGHT}
-        borderRadius="md"
-        border="2px solid"
-        borderColor={isHighlighted ? 'card.selected' : 'gray.600'}
-        bg="card.back"
-        bgGradient="linear(135deg, blue.700, blue.900)"
-        display="flex"
-        alignItems="center"
-        justifyContent="center"
-        cursor={onClick ? 'pointer' : 'default'}
-        transition="all 0.3s ease-in-out"
-        shadow={isHighlighted ? '0 0 12px rgba(255, 214, 0, 0.5)' : 'sm'}
-        onClick={onClick}
-      >
-        <Text fontSize={{ base: 'xs', md: 'sm' }} color="blue.200" fontWeight="bold" opacity={0.5}>
-          CHECK
-        </Text>
-      </Box>
-      {slot && (
-        <Badge colorScheme={isHighlighted ? 'yellow' : 'gray'} fontSize="xs">
-          {slot}
-        </Badge>
-      )}
-    </VStack>
-  );
-};
 
 // ============================================================
 // Opponent Display
@@ -141,6 +55,7 @@ const OpponentRow: FC<OpponentProps> = ({ player, isCurrentTurn }) => {
             bg="card.back"
             border="1px solid"
             borderColor="gray.600"
+            opacity={h.card === undefined ? 0.3 : 1}
           />
         ))}
       </HStack>
@@ -203,7 +118,7 @@ export const GameBoard: FC = () => {
 
   // Helper: get peeked card data for a slot
   const getPeekedCardForSlot = useCallback(
-    (slot: string): Card | null => {
+    (slot: string): CardType | null => {
       if (!isPeeking || !peekedCards) return null;
       const peeked = peekedCards.find((pc: PeekedCard) => pc.slot === slot);
       return peeked?.card ?? null;
@@ -311,23 +226,7 @@ export const GameBoard: FC = () => {
         <Flex justify="center" align="center" gap={{ base: 6, md: 10 }}>
           {/* Draw Pile */}
           <VStack spacing={2}>
-            <Box
-              w={CARD_WIDTH}
-              h={CARD_HEIGHT}
-              borderRadius="md"
-              border="2px solid"
-              borderColor="gray.600"
-              bg="card.back"
-              bgGradient="linear(135deg, blue.700, blue.900)"
-              display="flex"
-              alignItems="center"
-              justifyContent="center"
-              position="relative"
-            >
-              <Text fontSize="xs" color="blue.200" fontWeight="bold" opacity={0.5}>
-                CHECK
-              </Text>
-            </Box>
+            <CardBack size="md" />
             <Text fontSize="xs" color="gray.400">
               Deck ({gameState.deckCount})
             </Text>
@@ -336,11 +235,11 @@ export const GameBoard: FC = () => {
           {/* Discard Pile */}
           <VStack spacing={2}>
             {topDiscard ? (
-              <CardDisplay card={topDiscard} faceUp={true} />
+              <Card card={topDiscard} />
             ) : (
               <Box
-                w={CARD_WIDTH}
-                h={CARD_HEIGHT}
+                w="80px"
+                h="112px"
                 borderRadius="md"
                 border="2px dashed"
                 borderColor="gray.600"
@@ -377,15 +276,19 @@ export const GameBoard: FC = () => {
             {myPlayer.hand.map((h: ClientHandSlot) => {
               const peekedCard = getPeekedCardForSlot(h.slot);
               const showFaceUp = isPeekedSlot(h.slot) && peekedCard !== null;
+              const visibleCard = showFaceUp ? peekedCard : h.card;
 
               return (
-                <CardDisplay
-                  key={h.slot}
-                  card={showFaceUp ? peekedCard : h.card}
-                  faceUp={showFaceUp || h.card !== null}
-                  isHighlighted={isPeekedSlot(h.slot)}
-                  slot={h.slot}
-                />
+                <VStack key={h.slot} spacing={1}>
+                  {visibleCard ? (
+                    <Card card={visibleCard} isSelected={isPeekedSlot(h.slot)} />
+                  ) : (
+                    <CardBack isSelected={isPeekedSlot(h.slot)} />
+                  )}
+                  <Badge colorScheme={isPeekedSlot(h.slot) ? 'yellow' : 'gray'} fontSize="xs">
+                    {h.slot}
+                  </Badge>
+                </VStack>
               );
             })}
           </HStack>
