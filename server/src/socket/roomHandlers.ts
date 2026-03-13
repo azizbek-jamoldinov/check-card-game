@@ -1,0 +1,315 @@
+import { Server as SocketIOServer, Socket } from 'socket.io';
+import { RoomModel } from '../models/Room';
+import {
+  generatePlayerId,
+  generateRoomCode,
+  validateRoomCode,
+  validateUsername,
+} from '../utils/helpers';
+import { registerPlayer, unregisterPlayer } from './playerMapping';
+
+// ============================================================
+// Constants
+// ============================================================
+
+const MIN_PLAYERS = 4;
+const MAX_PLAYERS = 6;
+
+// ============================================================
+// Helper: Broadcast room state to all members (F-020)
+// ============================================================
+
+async function broadcastRoomUpdate(io: SocketIOServer, roomCode: string): Promise<void> {
+  const room = await RoomModel.findOne({ roomCode });
+  if (!room) return;
+
+  io.to(roomCode).emit('roomUpdated', {
+    roomCode: room.roomCode,
+    host: room.host,
+    players: room.players.map((p) => ({
+      id: p.id,
+      username: p.username,
+    })),
+    status: room.status,
+    maxPlayers: MAX_PLAYERS,
+    minPlayers: MIN_PLAYERS,
+  });
+}
+
+// ============================================================
+// Room Event Handlers
+// ============================================================
+
+export function registerRoomHandlers(io: SocketIOServer, socket: Socket): void {
+  // ----------------------------------------------------------
+  // F-016: Create Room
+  // ----------------------------------------------------------
+  socket.on(
+    'createRoom',
+    async (
+      data: { username: string },
+      callback?: (response: {
+        success: boolean;
+        roomCode?: string;
+        playerId?: string;
+        error?: string;
+      }) => void,
+    ) => {
+      try {
+        const username = validateUsername(data?.username);
+        if (!username) {
+          callback?.({ success: false, error: 'Username must be 1-20 characters' });
+          return;
+        }
+
+        // Generate unique room code (retry on collision)
+        let roomCode: string;
+        let attempts = 0;
+        do {
+          roomCode = generateRoomCode();
+          attempts++;
+          if (attempts > 10) {
+            callback?.({ success: false, error: 'Failed to generate room code' });
+            return;
+          }
+        } while (await RoomModel.exists({ roomCode }));
+
+        const playerId = generatePlayerId();
+
+        // Create room in DB (F-021: status starts as 'lobby')
+        const room = new RoomModel({
+          roomCode,
+          host: playerId,
+          players: [{ id: playerId, username }],
+          gameState: null,
+          status: 'lobby',
+        });
+        await room.save();
+
+        // Join socket.io room and register mapping
+        await socket.join(roomCode);
+        registerPlayer(socket.id, playerId, roomCode, username);
+
+        console.log(`Room ${roomCode} created by ${username} (${playerId})`);
+
+        callback?.({ success: true, roomCode, playerId });
+        await broadcastRoomUpdate(io, roomCode);
+      } catch (error) {
+        console.error('Error creating room:', error);
+        callback?.({ success: false, error: 'Failed to create room' });
+      }
+    },
+  );
+
+  // ----------------------------------------------------------
+  // F-017: Join Room
+  // ----------------------------------------------------------
+  socket.on(
+    'joinRoom',
+    async (
+      data: { roomCode: string; username: string },
+      callback?: (response: {
+        success: boolean;
+        playerId?: string;
+        room?: {
+          roomCode: string;
+          host: string;
+          players: { id: string; username: string }[];
+          status: string;
+        };
+        error?: string;
+      }) => void,
+    ) => {
+      try {
+        const username = validateUsername(data?.username);
+        if (!username) {
+          callback?.({ success: false, error: 'Username must be 1-20 characters' });
+          return;
+        }
+
+        const roomCode = validateRoomCode(data?.roomCode);
+        if (!roomCode) {
+          callback?.({ success: false, error: 'Invalid room code' });
+          return;
+        }
+
+        const room = await RoomModel.findOne({ roomCode });
+        if (!room) {
+          callback?.({ success: false, error: 'Room not found' });
+          return;
+        }
+
+        if (room.status !== 'lobby') {
+          callback?.({ success: false, error: 'Game already started' });
+          return;
+        }
+
+        if (room.players.length >= MAX_PLAYERS) {
+          callback?.({ success: false, error: 'Room is full' });
+          return;
+        }
+
+        const playerId = generatePlayerId();
+
+        room.players.push({ id: playerId, username });
+        await room.save();
+
+        // Join socket.io room and register mapping
+        await socket.join(roomCode);
+        registerPlayer(socket.id, playerId, roomCode, username);
+
+        console.log(`${username} (${playerId}) joined room ${roomCode}`);
+
+        callback?.({
+          success: true,
+          playerId,
+          room: {
+            roomCode: room.roomCode,
+            host: room.host,
+            players: room.players.map((p) => ({ id: p.id, username: p.username })),
+            status: room.status,
+          },
+        });
+        await broadcastRoomUpdate(io, roomCode);
+      } catch (error) {
+        console.error('Error joining room:', error);
+        callback?.({ success: false, error: 'Failed to join room' });
+      }
+    },
+  );
+
+  // ----------------------------------------------------------
+  // F-018: Leave Room
+  // ----------------------------------------------------------
+  socket.on(
+    'leaveRoom',
+    async (
+      data: { roomCode: string; playerId: string },
+      callback?: (response: { success: boolean; error?: string }) => void,
+    ) => {
+      try {
+        const roomCode = validateRoomCode(data?.roomCode);
+        if (!roomCode) {
+          callback?.({ success: false, error: 'Invalid room code' });
+          return;
+        }
+
+        await handlePlayerLeave(io, socket, roomCode, data.playerId);
+        callback?.({ success: true });
+      } catch (error) {
+        console.error('Error leaving room:', error);
+        callback?.({ success: false, error: 'Failed to leave room' });
+      }
+    },
+  );
+
+  // ----------------------------------------------------------
+  // F-019: Start Game (stub — full game init in Feature 5)
+  // ----------------------------------------------------------
+  socket.on(
+    'startGame',
+    async (
+      data: { roomCode: string; playerId: string },
+      callback?: (response: { success: boolean; error?: string }) => void,
+    ) => {
+      try {
+        const roomCode = validateRoomCode(data?.roomCode);
+        if (!roomCode) {
+          callback?.({ success: false, error: 'Invalid room code' });
+          return;
+        }
+
+        const room = await RoomModel.findOne({ roomCode });
+        if (!room) {
+          callback?.({ success: false, error: 'Room not found' });
+          return;
+        }
+
+        // Validate host
+        if (room.host !== data.playerId) {
+          callback?.({ success: false, error: 'Only the host can start the game' });
+          return;
+        }
+
+        // Validate player count
+        if (room.players.length < MIN_PLAYERS) {
+          callback?.({
+            success: false,
+            error: `Need at least ${MIN_PLAYERS} players to start`,
+          });
+          return;
+        }
+
+        // Validate room status (F-021)
+        if (room.status !== 'lobby') {
+          callback?.({ success: false, error: 'Game already started' });
+          return;
+        }
+
+        // Update room status to playing (F-021)
+        room.status = 'playing';
+        await room.save();
+
+        console.log(`Game started in room ${roomCode} by ${data.playerId}`);
+
+        callback?.({ success: true });
+        await broadcastRoomUpdate(io, roomCode);
+
+        // TODO: Initialize game state and emit 'gameStarted' (Feature 5)
+      } catch (error) {
+        console.error('Error starting game:', error);
+        callback?.({ success: false, error: 'Failed to start game' });
+      }
+    },
+  );
+
+  // ----------------------------------------------------------
+  // Disconnect handler — auto-leave room
+  // ----------------------------------------------------------
+  socket.on('disconnect', async () => {
+    const mapping = unregisterPlayer(socket.id);
+    if (!mapping) return;
+
+    console.log(`Player ${mapping.username} (${mapping.playerId}) disconnected`);
+    await handlePlayerLeave(io, socket, mapping.roomCode, mapping.playerId);
+  });
+}
+
+// ============================================================
+// Shared: Remove player from room (F-018)
+// ============================================================
+
+async function handlePlayerLeave(
+  io: SocketIOServer,
+  socket: Socket,
+  roomCode: string,
+  playerId: string,
+): Promise<void> {
+  const room = await RoomModel.findOne({ roomCode });
+  if (!room) return;
+
+  // Remove player from room
+  const playerIndex = room.players.findIndex((p) => p.id === playerId);
+  if (playerIndex === -1) return;
+
+  room.players.splice(playerIndex, 1);
+  socket.leave(roomCode);
+
+  console.log(`Player ${playerId} left room ${roomCode}`);
+
+  // If room is empty, delete it
+  if (room.players.length === 0) {
+    await RoomModel.deleteOne({ roomCode });
+    console.log(`Room ${roomCode} deleted (empty)`);
+    return;
+  }
+
+  // Reassign host if the leaving player was host
+  if (room.host === playerId) {
+    room.host = room.players[0].id;
+    console.log(`Host reassigned to ${room.players[0].username} in room ${roomCode}`);
+  }
+
+  await room.save();
+  await broadcastRoomUpdate(io, roomCode);
+}

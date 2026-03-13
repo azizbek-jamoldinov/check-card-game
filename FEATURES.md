@@ -29,12 +29,12 @@ Derived from PLAN.md. Features are grouped by domain and ordered by implementati
 
 ### 3. Room Management
 
-- [ ] **F-016**: Create room — generates 6-char unique room code, assigns host
-- [ ] **F-017**: Join room — join by room code, validate 4-6 player limit
-- [ ] **F-018**: Leave room — remove player, reassign host if needed
-- [ ] **F-019**: Start game — host-only, requires 4+ players
-- [ ] **F-020**: Real-time room updates — broadcast player join/leave to all room members
-- [ ] **F-021**: Room status tracking — lobby / playing / finished
+- [x] **F-016**: Create room — generates 6-char unique room code, assigns host
+- [x] **F-017**: Join room — join by room code, validate 4-6 player limit
+- [x] **F-018**: Leave room — remove player, reassign host if needed
+- [x] **F-019**: Start game — host-only, requires 4+ players
+- [x] **F-020**: Real-time room updates — broadcast player join/leave to all room members
+- [x] **F-021**: Room status tracking — lobby / playing / finished
 
 ### 4. Deck & Card Engine
 
