@@ -131,56 +131,10 @@ async function advanceTurnAndCheckRoundEnd(
       `Room ${roomCode}: GAME ENDED — Winner: ${gameEndResult.winner.username} (${gameEndResult.winner.score}), Loser: ${gameEndResult.loser.username} (${gameEndResult.loser.score})`,
     );
   } else {
-    // F-076: Start a new round automatically
-    console.log(`Room ${roomCode}: Round ${roundResult.roundNumber} ended. Starting new round...`);
-
-    // Delay new round start to let clients show the round-end modal
-    setTimeout(async () => {
-      const release = await getRoomMutex(roomCode).acquire();
-      try {
-        // Re-fetch room to avoid stale state
-        const freshRoom = await RoomModel.findOne({ roomCode });
-        if (!freshRoom || !freshRoom.gameState) return;
-
-        const oldGameState = freshRoom.gameState as unknown as GameState;
-
-        // Initialize new round with existing scores and incremented round number
-        const players = oldGameState.players.map((p) => ({
-          id: p.playerId,
-          username: p.username,
-        }));
-        const newGameState = initializeGameState(
-          players,
-          oldGameState.scores,
-          oldGameState.roundNumber + 1,
-        );
-
-        // Save new game state
-        freshRoom.gameState = newGameState;
-        freshRoom.markModified('gameState');
-        await freshRoom.save();
-
-        // Send personalized gameStarted events to each player (same as initial start)
-        for (const player of newGameState.players) {
-          const socketId = getSocketByPlayer(player.playerId);
-          if (!socketId) continue;
-
-          const clientState = sanitizeGameState(newGameState, player.playerId);
-          const peeked = getPeekedCards(player);
-
-          io.to(socketId).emit('gameStarted', {
-            gameState: clientState,
-            peekedCards: peeked,
-          });
-        }
-
-        console.log(`Room ${roomCode}: New round ${newGameState.roundNumber} started`);
-      } catch (error) {
-        console.error('Error starting new round:', error);
-      } finally {
-        release();
-      }
-    }, 5000); // 5-second delay for round-end modal
+    // Round ended but game continues — host must manually start next round
+    console.log(
+      `Room ${roomCode}: Round ${roundResult.roundNumber} ended. Waiting for host to start next round.`,
+    );
   }
 
   return true;
@@ -933,6 +887,85 @@ export function registerGameHandlers(io: SocketIOServer, socket: Socket): void {
       } catch (error) {
         console.error('Error in redKingChoice:', error);
         callback?.({ success: false, error: 'Failed to process Red King choice' });
+      } finally {
+        release();
+      }
+    },
+  );
+
+  // ----------------------------------------------------------
+  // startNextRound — host manually starts the next round
+  // ----------------------------------------------------------
+  socket.on(
+    'startNextRound',
+    async (
+      data: { roomCode: string; playerId: string },
+      callback?: (response: { success: boolean; error?: string }) => void,
+    ) => {
+      const release = await getRoomMutex(data.roomCode).acquire();
+      try {
+        const room = await RoomModel.findOne({ roomCode: data.roomCode });
+        if (!room || !room.gameState) {
+          callback?.({ success: false, error: 'Room or game not found' });
+          return;
+        }
+
+        // Only the host can start the next round
+        if (room.host !== data.playerId) {
+          callback?.({ success: false, error: 'Only the host can start the next round' });
+          return;
+        }
+
+        // Room must be in 'playing' status
+        if (room.status !== 'playing') {
+          callback?.({ success: false, error: 'Game is not in progress' });
+          return;
+        }
+
+        const oldGameState = room.gameState as unknown as GameState;
+
+        // Game state must be in 'roundEnd' phase
+        if (oldGameState.phase !== 'roundEnd') {
+          callback?.({ success: false, error: 'Round has not ended yet' });
+          return;
+        }
+
+        // Initialize new round with existing scores and incremented round number
+        const players = oldGameState.players.map((p) => ({
+          id: p.playerId,
+          username: p.username,
+        }));
+        const newGameState = initializeGameState(
+          players,
+          oldGameState.scores,
+          oldGameState.roundNumber + 1,
+        );
+
+        // Save new game state
+        room.gameState = newGameState;
+        room.markModified('gameState');
+        await room.save();
+
+        callback?.({ success: true });
+
+        // Send personalized gameStarted events to each player (same as initial start)
+        for (const player of newGameState.players) {
+          const socketId = getSocketByPlayer(player.playerId);
+          if (!socketId) continue;
+
+          const clientState = sanitizeGameState(newGameState, player.playerId);
+          const peeked = getPeekedCards(player);
+
+          io.to(socketId).emit('gameStarted', {
+            gameState: clientState,
+            peekedCards: peeked,
+          });
+        }
+
+        console.log(`Room ${data.roomCode}: Host started new round ${newGameState.roundNumber}`);
+      } catch (error) {
+        console.error('Error in startNextRound:', error);
+        callback?.({ success: false, error: 'Failed to start next round' });
       } finally {
         release();
       }

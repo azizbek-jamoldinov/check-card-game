@@ -68,6 +68,8 @@ interface SocketContextValue {
   joinRoom: (roomCode: string, username: string) => Promise<{ success: boolean; error?: string }>;
   leaveRoom: () => void;
   startGame: () => Promise<{ success: boolean; error?: string }>;
+  /** Host starts the next round after round-end modal */
+  startNextRound: () => Promise<{ success: boolean; error?: string }>;
   endPeek: () => Promise<{ success: boolean; error?: string }>;
   /** Call check at the start of your turn (F-059) */
   callCheck: () => Promise<{ success: boolean; error?: string }>;
@@ -382,6 +384,25 @@ export const SocketProvider: FC<SocketProviderProps> = ({ children }) => {
   }, [roomData, playerId]);
 
   // ----------------------------------------------------------
+  // Start Next Round — host triggers next round after round-end (F-076)
+  // ----------------------------------------------------------
+  const startNextRound = useCallback((): Promise<{ success: boolean; error?: string }> => {
+    return new Promise((resolve) => {
+      if (!roomData || !playerId) {
+        resolve({ success: false, error: 'Not in a room' });
+        return;
+      }
+      socket.emit(
+        'startNextRound',
+        { roomCode: roomData.roomCode, playerId },
+        (response: { success: boolean; error?: string }) => {
+          resolve(response);
+        },
+      );
+    });
+  }, [roomData, playerId]);
+
+  // ----------------------------------------------------------
   // End Peek — transition from peeking to playing (F-031 → F-033)
   // ----------------------------------------------------------
   const endPeek = useCallback((): Promise<{ success: boolean; error?: string }> => {
@@ -618,6 +639,7 @@ export const SocketProvider: FC<SocketProviderProps> = ({ children }) => {
     joinRoom,
     leaveRoom,
     startGame,
+    startNextRound,
     endPeek,
     callCheck,
     performAction,

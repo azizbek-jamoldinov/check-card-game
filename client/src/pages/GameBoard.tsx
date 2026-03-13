@@ -157,6 +157,7 @@ export const GameBoard: FC = () => {
     redKingChoice,
     leaveRoom,
     debugPeek,
+    startNextRound,
     clearRoundEndData,
     clearGameEndData,
   } = useSocket();
@@ -1449,9 +1450,21 @@ export const GameBoard: FC = () => {
             </VStack>
           </ModalBody>
           <ModalFooter justifyContent="center">
-            <Text fontSize="xs" color="gray.500">
-              {roundEndData?.nextRoundStarting ? 'Next round starting soon...' : 'Game over!'}
-            </Text>
+            {roundEndData?.nextRoundStarting ? (
+              roomData?.host === playerId ? (
+                <Button colorScheme="green" onClick={() => startNextRound()}>
+                  Next Round
+                </Button>
+              ) : (
+                <Text fontSize="xs" color="gray.500">
+                  Waiting for host to start next round...
+                </Text>
+              )
+            ) : (
+              <Text fontSize="xs" color="gray.500">
+                Game over!
+              </Text>
+            )}
           </ModalFooter>
         </ModalContent>
       </Modal>
