@@ -16,6 +16,7 @@ import {
 import { useNavigate } from 'react-router-dom';
 import { useSocket } from '../context/SocketContext';
 import { DEBUG_MODE } from '../context/SocketContext';
+import socket from '../services/socket';
 import { Card } from '../components/cards/Card';
 import { CardBack } from '../components/cards/CardBack';
 import type { Card as CardType } from '../types/card.types';
@@ -179,6 +180,24 @@ export const GameBoard: FC = () => {
       navigate('/');
     }
   }, [gameState, roomData, navigate]);
+
+  // Listen for player-left notifications
+  useEffect(() => {
+    const handler = (data: { username: string; gameEnded: boolean }) => {
+      toast({
+        title: data.gameEnded
+          ? `${data.username} left — game ended`
+          : `${data.username} left the game`,
+        status: data.gameEnded ? 'error' : 'warning',
+        duration: 3000,
+        position: 'top',
+      });
+    };
+    socket.on('playerLeftGame', handler);
+    return () => {
+      socket.off('playerLeftGame', handler);
+    };
+  }, [toast]);
 
   // Peek countdown — when timer expires, call endPeek to transition to playing (F-031, F-033)
   useEffect(() => {

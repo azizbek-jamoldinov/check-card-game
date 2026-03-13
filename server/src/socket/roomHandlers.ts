@@ -1,6 +1,9 @@
 import { Server as SocketIOServer, Socket } from 'socket.io';
 import { RoomModel } from '../models/Room';
 import { initializeGameState, sanitizeGameState, getPeekedCards } from '../game/GameSetup';
+import { removePlayerFromGame } from '../game/TurnManager';
+import { getAvailableActions } from '../game/TurnManager';
+import { getCurrentTurnPlayerId } from '../game/TurnManager';
 import {
   generatePlayerId,
   generateRoomCode,
@@ -8,6 +11,7 @@ import {
   validateUsername,
 } from '../utils/helpers';
 import { registerPlayer, unregisterPlayer, getSocketByPlayer } from './playerMapping';
+import type { GameState } from '../types/game.types';
 
 // ============================================================
 // Constants
@@ -347,6 +351,58 @@ async function handlePlayerLeave(
   if (room.host === playerId) {
     room.host = room.players[0].id;
     console.log(`Host reassigned to ${room.players[0].username} in room ${roomCode}`);
+  }
+
+  // Handle in-game removal if a game is active
+  if (room.gameState && room.status === 'playing') {
+    const gameState = room.gameState as unknown as GameState;
+    const result = removePlayerFromGame(gameState, playerId);
+
+    if (result.removed) {
+      console.log(`Player ${result.username} removed from active game in room ${roomCode}`);
+
+      if (result.gameEnded) {
+        // Only 1 (or 0) players remain — end the game
+        room.status = 'finished';
+        console.log(`Game ended in room ${roomCode} — not enough players`);
+      }
+
+      // Save updated game state
+      room.gameState = gameState;
+      room.markModified('gameState');
+      await room.save();
+
+      // Notify remaining players someone left
+      io.to(roomCode).emit('playerLeftGame', {
+        username: result.username,
+        gameEnded: result.gameEnded,
+      });
+
+      // Broadcast updated game state to remaining players
+      for (const player of gameState.players) {
+        const sid = getSocketByPlayer(player.playerId);
+        if (!sid) continue;
+        const clientState = sanitizeGameState(gameState, player.playerId);
+        io.to(sid).emit('gameStateUpdated', clientState);
+      }
+
+      // If the turn changed and game is still playing, notify the new current player
+      if (result.turnChanged && !result.gameEnded && gameState.phase === 'playing') {
+        const turnPlayerId = getCurrentTurnPlayerId(gameState);
+        if (turnPlayerId) {
+          const sid = getSocketByPlayer(turnPlayerId);
+          if (sid) {
+            io.to(sid).emit('yourTurn', {
+              playerId: turnPlayerId,
+              canCheck: gameState.checkCalledBy === null,
+              availableActions: getAvailableActions(gameState),
+            });
+          }
+        }
+      }
+
+      return;
+    }
   }
 
   await room.save();

@@ -6,6 +6,7 @@ import {
   isRoundOver,
   transitionFromPeeking,
   getCurrentTurnPlayerId,
+  removePlayerFromGame,
 } from '../game/TurnManager';
 import { initializeGameState } from '../game/GameSetup';
 import type { GameState } from '../types/game.types';
@@ -244,5 +245,173 @@ describe('getCurrentTurnPlayerId', () => {
     gs.currentTurnIndex = 0;
     advanceTurn(gs);
     expect(getCurrentTurnPlayerId(gs)).toBe(gs.players[1].playerId);
+  });
+});
+
+// ============================================================
+// removePlayerFromGame
+// ============================================================
+
+describe('removePlayerFromGame', () => {
+  it('removes a player from the game and discards their hand', () => {
+    const gs = createPlayingGameState(4);
+    const playerId = gs.players[1].playerId;
+    const handCardCount = gs.players[1].hand.length;
+    const discardBefore = gs.discardPile.length;
+
+    const result = removePlayerFromGame(gs, playerId);
+
+    expect(result.removed).toBe(true);
+    expect(result.gameEnded).toBe(false);
+    expect(gs.players.length).toBe(3);
+    expect(gs.players.find((p) => p.playerId === playerId)).toBeUndefined();
+    // Hand cards should have been added to discard pile
+    expect(gs.discardPile.length).toBe(discardBefore + handCardCount);
+  });
+
+  it('returns removed: false for nonexistent player', () => {
+    const gs = createPlayingGameState(3);
+    const result = removePlayerFromGame(gs, 'nonexistent');
+    expect(result.removed).toBe(false);
+    expect(gs.players.length).toBe(3);
+  });
+
+  it('shifts currentTurnIndex back when a player before the current turn is removed', () => {
+    const gs = createPlayingGameState(4);
+    gs.currentTurnIndex = 2;
+    const currentPlayerId = gs.players[2].playerId;
+    const removedPlayerId = gs.players[0].playerId;
+
+    const result = removePlayerFromGame(gs, removedPlayerId);
+
+    expect(result.removed).toBe(true);
+    expect(result.turnChanged).toBe(false);
+    // Index should have shifted back by 1
+    expect(gs.currentTurnIndex).toBe(1);
+    // The same player should still have the turn
+    expect(gs.players[gs.currentTurnIndex].playerId).toBe(currentPlayerId);
+  });
+
+  it('does not shift currentTurnIndex when a player after the current turn is removed', () => {
+    const gs = createPlayingGameState(4);
+    gs.currentTurnIndex = 0;
+    const currentPlayerId = gs.players[0].playerId;
+    const removedPlayerId = gs.players[3].playerId;
+
+    const result = removePlayerFromGame(gs, removedPlayerId);
+
+    expect(result.removed).toBe(true);
+    expect(result.turnChanged).toBe(false);
+    expect(gs.currentTurnIndex).toBe(0);
+    expect(gs.players[gs.currentTurnIndex].playerId).toBe(currentPlayerId);
+  });
+
+  it('sets turnChanged when the current turn player is removed', () => {
+    const gs = createPlayingGameState(4);
+    gs.currentTurnIndex = 1;
+    const removedPlayerId = gs.players[1].playerId;
+    const nextPlayerId = gs.players[2].playerId;
+
+    const result = removePlayerFromGame(gs, removedPlayerId);
+
+    expect(result.removed).toBe(true);
+    expect(result.turnChanged).toBe(true);
+    // The next player (was at index 2, now at index 1) should have the turn
+    expect(gs.players[gs.currentTurnIndex].playerId).toBe(nextPlayerId);
+  });
+
+  it('wraps currentTurnIndex when the last player in the array is removed during their turn', () => {
+    const gs = createPlayingGameState(3);
+    gs.currentTurnIndex = 2;
+    const removedPlayerId = gs.players[2].playerId;
+
+    const result = removePlayerFromGame(gs, removedPlayerId);
+
+    expect(result.removed).toBe(true);
+    expect(result.turnChanged).toBe(true);
+    // Should wrap to index 0
+    expect(gs.currentTurnIndex).toBe(0);
+  });
+
+  it('ends the game when only 1 player remains', () => {
+    const gs = createPlayingGameState(2);
+    const removedPlayerId = gs.players[0].playerId;
+
+    const result = removePlayerFromGame(gs, removedPlayerId);
+
+    expect(result.removed).toBe(true);
+    expect(result.gameEnded).toBe(true);
+    expect(gs.phase).toBe('roundEnd');
+    expect(gs.players.length).toBe(1);
+  });
+
+  it('clears drawnCard when the leaving player had a pending draw', () => {
+    const gs = createPlayingGameState(3);
+    const removedPlayerId = gs.players[1].playerId;
+    const drawnCard = gs.deck.pop()!;
+    gs.drawnCard = drawnCard;
+    gs.drawnByPlayerId = removedPlayerId;
+    gs.drawnSource = 'deck';
+    const discardBefore = gs.discardPile.length;
+    const handCount = gs.players[1].hand.length;
+
+    const result = removePlayerFromGame(gs, removedPlayerId);
+
+    expect(result.removed).toBe(true);
+    expect(gs.drawnCard).toBeNull();
+    expect(gs.drawnByPlayerId).toBeNull();
+    expect(gs.drawnSource).toBeNull();
+    // Drawn card + hand cards should all be in discard
+    expect(gs.discardPile.length).toBe(discardBefore + handCount + 1);
+  });
+
+  it('does not clear drawnCard when another player had the pending draw', () => {
+    const gs = createPlayingGameState(3);
+    const removedPlayerId = gs.players[2].playerId;
+    const otherPlayerId = gs.players[0].playerId;
+    const drawnCard = gs.deck.pop()!;
+    gs.drawnCard = drawnCard;
+    gs.drawnByPlayerId = otherPlayerId;
+    gs.drawnSource = 'deck';
+
+    removePlayerFromGame(gs, removedPlayerId);
+
+    // Drawn card should remain for the other player
+    expect(gs.drawnCard).toBe(drawnCard);
+    expect(gs.drawnByPlayerId).toBe(otherPlayerId);
+    expect(gs.drawnSource).toBe('deck');
+  });
+
+  it('clears checkCalledBy when the leaving player called check', () => {
+    const gs = createPlayingGameState(4);
+    const removedPlayerId = gs.players[1].playerId;
+    gs.checkCalledBy = removedPlayerId;
+    gs.checkCalledAtIndex = 1;
+
+    removePlayerFromGame(gs, removedPlayerId);
+
+    expect(gs.checkCalledBy).toBeNull();
+    expect(gs.checkCalledAtIndex).toBeNull();
+  });
+
+  it('preserves checkCalledBy when another player called check', () => {
+    const gs = createPlayingGameState(4);
+    const removedPlayerId = gs.players[2].playerId;
+    const checkerPlayerId = gs.players[0].playerId;
+    gs.checkCalledBy = checkerPlayerId;
+    gs.checkCalledAtIndex = 0;
+
+    removePlayerFromGame(gs, removedPlayerId);
+
+    expect(gs.checkCalledBy).toBe(checkerPlayerId);
+  });
+
+  it('returns the username of the removed player', () => {
+    const gs = createPlayingGameState(3);
+    const username = gs.players[1].username;
+
+    const result = removePlayerFromGame(gs, gs.players[1].playerId);
+
+    expect(result.username).toBe(username);
   });
 });

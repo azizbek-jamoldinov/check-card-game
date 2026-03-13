@@ -142,6 +142,19 @@ export const SocketProvider: FC<SocketProviderProps> = ({ children }) => {
       setDrawnFromDiscard(data.fromDiscard === true);
     });
 
+    socket.on('playerLeftGame', (data: { username: string; gameEnded: boolean }) => {
+      console.log(`Player ${data.username} left the game. Game ended: ${data.gameEnded}`);
+      if (data.gameEnded) {
+        setGameState(null);
+        setPeekedCards(null);
+        setDrawnCard(null);
+        setDrawnFromDiscard(false);
+        setIsMyTurn(false);
+        setTurnData(null);
+        navigateRef.current('/');
+      }
+    });
+
     return () => {
       socket.off('connect');
       socket.off('disconnect');
@@ -151,6 +164,7 @@ export const SocketProvider: FC<SocketProviderProps> = ({ children }) => {
       socket.off('gameStateUpdated');
       socket.off('yourTurn');
       socket.off('cardDrawn');
+      socket.off('playerLeftGame');
       socket.disconnect();
     };
   }, []);

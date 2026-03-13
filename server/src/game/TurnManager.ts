@@ -87,3 +87,81 @@ export function getCurrentTurnPlayerId(gameState: GameState): string | null {
   const player = gameState.players[gameState.currentTurnIndex];
   return player?.playerId ?? null;
 }
+
+// ============================================================
+// Remove Player from Active Game
+// ============================================================
+
+export interface RemovePlayerResult {
+  /** Whether the player was found and removed */
+  removed: boolean;
+  /** Whether the current turn player changed (need to emit yourTurn) */
+  turnChanged: boolean;
+  /** Whether the game should end (fewer than 2 players remain) */
+  gameEnded: boolean;
+  /** Username of the removed player */
+  username: string | null;
+}
+
+/**
+ * Removes a player from an active game, handling:
+ * - Discarding their hand cards to the discard pile
+ * - Clearing any pending drawn card if it belongs to the leaving player
+ * - Fixing currentTurnIndex to avoid index corruption
+ * - Clearing checkCalledBy if the leaving player called check
+ * - Ending the game if fewer than 2 players remain
+ */
+export function removePlayerFromGame(gameState: GameState, playerId: string): RemovePlayerResult {
+  const playerIndex = gameState.players.findIndex((p) => p.playerId === playerId);
+  if (playerIndex === -1) {
+    return { removed: false, turnChanged: false, gameEnded: false, username: null };
+  }
+
+  const player = gameState.players[playerIndex];
+  const wasCurrentTurn = gameState.currentTurnIndex === playerIndex;
+
+  // 1. Discard the player's hand cards
+  for (const slot of player.hand) {
+    gameState.discardPile.push(slot.card);
+  }
+
+  // 2. Clear pending drawn card if this player had one
+  if (gameState.drawnByPlayerId === playerId) {
+    if (gameState.drawnCard) {
+      gameState.discardPile.push(gameState.drawnCard);
+    }
+    gameState.drawnCard = null;
+    gameState.drawnByPlayerId = null;
+    gameState.drawnSource = null;
+  }
+
+  // 3. Clear check if this player called it
+  if (gameState.checkCalledBy === playerId) {
+    gameState.checkCalledBy = null;
+    gameState.checkCalledAtIndex = null;
+  }
+
+  // 4. Remove the player from the array
+  gameState.players.splice(playerIndex, 1);
+
+  // 5. Check if game should end
+  if (gameState.players.length < 2) {
+    gameState.phase = 'roundEnd';
+    return { removed: true, turnChanged: false, gameEnded: true, username: player.username };
+  }
+
+  // 6. Fix currentTurnIndex
+  let turnChanged = false;
+  if (wasCurrentTurn) {
+    // The removed player had the turn — the next player (now at the same index) gets it
+    // But we need to wrap if we removed the last player in the array
+    gameState.currentTurnIndex = gameState.currentTurnIndex % gameState.players.length;
+    turnChanged = true;
+  } else if (gameState.currentTurnIndex > playerIndex) {
+    // A player before the current turn was removed, shift index back
+    gameState.currentTurnIndex--;
+  }
+  // If currentTurnIndex < playerIndex, no change needed
+
+  return { removed: true, turnChanged, gameEnded: false, username: player.username };
+}
