@@ -20,12 +20,12 @@ Derived from PLAN.md. Features are grouped by domain and ordered by implementati
 
 ### 2. Data Models & Types
 
-- [ ] **F-010**: Card type — id, suit, rank, value, isRed
-- [ ] **F-011**: PlayerState schema — playerId, username, hand (slots + cards), peekedSlots, totalScore
-- [ ] **F-012**: GameState schema — deck, discardPile, players, currentTurnIndex, checkCalledBy, roundNumber, scores
-- [ ] **F-013**: Room schema — roomCode, host, players, gameState, status, createdAt
-- [ ] **F-014**: ClientGameState type — sanitized state for clients (deckCount instead of deck, hidden cards as null)
-- [ ] **F-015**: ClientPlayerState type — own cards visible, other players' cards null
+- [x] **F-010**: Card type — id, suit, rank, value, isRed
+- [x] **F-011**: PlayerState schema — playerId, username, hand (slots + cards), peekedSlots, totalScore
+- [x] **F-012**: GameState schema — deck, discardPile, players, currentTurnIndex, checkCalledBy, roundNumber, scores
+- [x] **F-013**: Room schema — roomCode, host, players, gameState, status, createdAt
+- [x] **F-014**: ClientGameState type — sanitized state for clients (deckCount instead of deck, hidden cards as null)
+- [x] **F-015**: ClientPlayerState type — own cards visible, other players' cards null
 
 ### 3. Room Management
 
@@ -183,6 +183,7 @@ Derived from PLAN.md. Features are grouped by domain and ordered by implementati
 ## Phase 2: Post-MVP
 
 ### Stability
+
 - [ ] **F-200**: Reconnection logic — save state to DB, rejoin after disconnect, resume from current state
 - [ ] **F-201**: Disconnection timeout — auto-kick after timeout
 - [ ] **F-202**: Room expiration (24 hours)
@@ -190,6 +191,7 @@ Derived from PLAN.md. Features are grouped by domain and ordered by implementati
 - [ ] **F-204**: Spectator mode
 
 ### Enhancements
+
 - [ ] **F-210**: Bot players — basic AI strategy, fill empty slots
 - [ ] **F-211**: Bot difficulty levels
 - [ ] **F-212**: User accounts — email/password registration
@@ -199,6 +201,7 @@ Derived from PLAN.md. Features are grouped by domain and ordered by implementati
 - [ ] **F-216**: Personal stats — wins, losses, win rate, recent games
 
 ### Polish
+
 - [ ] **F-220**: Card draw/discard/flip animations
 - [ ] **F-221**: Victory animations
 - [ ] **F-222**: Sound effects — card sounds, turn notifications, special effects, mute option
@@ -208,6 +211,7 @@ Derived from PLAN.md. Features are grouped by domain and ordered by implementati
 - [ ] **F-226**: Friend system and direct invites
 
 ### Performance & Infrastructure
+
 - [ ] **F-230**: Code splitting and lazy loading
 - [ ] **F-231**: WebSocket optimization
 - [ ] **F-232**: Database indexing (roomCode, playerId)
@@ -217,6 +221,7 @@ Derived from PLAN.md. Features are grouped by domain and ordered by implementati
 - [ ] **F-236**: Load testing
 
 ### Deployment
+
 - [ ] **F-240**: Frontend deployment (Vercel/Netlify)
 - [ ] **F-241**: Backend deployment (Railway/Render)
 - [ ] **F-242**: MongoDB Atlas production database
