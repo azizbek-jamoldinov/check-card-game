@@ -1,10 +1,12 @@
 import { Routes, Route } from 'react-router-dom';
-import HomePage from './pages/HomePage';
+import { HomePage } from './pages/HomePage';
+import { RoomLobby } from './pages/RoomLobby';
 
 function App() {
   return (
     <Routes>
       <Route path="/" element={<HomePage />} />
+      <Route path="/room" element={<RoomLobby />} />
     </Routes>
   );
 }

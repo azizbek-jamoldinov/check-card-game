@@ -147,8 +147,8 @@ Derived from PLAN.md. Features are grouped by domain and ordered by implementati
 
 ### 17. UI: Pages
 
-- [ ] **F-092**: Home page — username input, create room button, join room input + button
-- [ ] **F-093**: Room lobby — room code display with copy, player list (4-6 slots), host indicator, start/leave buttons
+- [x] **F-092**: Home page — username input, create room button, join room input + button
+- [x] **F-093**: Room lobby — room code display with copy, player list (4-6 slots), host indicator, start/leave buttons
 - [ ] **F-094**: Game board — opponents (top), draw/discard piles (center), player hand + actions (bottom), scores sidebar
 
 ### 18. UI: Game Board Components
