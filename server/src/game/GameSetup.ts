@@ -129,6 +129,8 @@ export function initializeGameState(
     roundNumber,
     scores,
     phase: 'dealing',
+    drawnCard: null,
+    drawnByPlayerId: null,
   };
 
   // Deal 4 cards to each player (F-028)

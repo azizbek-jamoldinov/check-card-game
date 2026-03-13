@@ -84,8 +84,18 @@ const OpponentRow: FC<OpponentProps> = ({ player, isCurrentTurn }) => {
 
 export const GameBoard: FC = () => {
   const navigate = useNavigate();
-  const { gameState, peekedCards, playerId, roomData, isMyTurn, turnData, endPeek, performAction } =
-    useSocket();
+  const {
+    gameState,
+    peekedCards,
+    playerId,
+    roomData,
+    isMyTurn,
+    turnData,
+    drawnCard,
+    endPeek,
+    performAction,
+    discardChoice,
+  } = useSocket();
   const toast = useToast();
 
   // Peek animation state
@@ -147,32 +157,46 @@ export const GameBoard: FC = () => {
   // ----------------------------------------------------------
 
   const canAct = isMyTurn && gameState?.phase === 'playing';
+  /** True when we have a drawn card pending discard choice */
+  const hasDrawnCard = drawnCard !== null;
 
   const handleDrawDeck = useCallback(async () => {
-    if (!canAct || !turnData?.availableActions.includes('drawDeck')) return;
+    if (!canAct || hasDrawnCard || !turnData?.availableActions.includes('drawDeck')) return;
     const result = await performAction('drawDeck');
     if (!result.success && result.error) {
       toast({ title: result.error, status: 'error', duration: 2000, position: 'top' });
     }
-  }, [canAct, turnData, performAction, toast]);
+  }, [canAct, hasDrawnCard, turnData, performAction, toast]);
 
   const handleTakeDiscard = useCallback(async () => {
-    if (!canAct || !turnData?.availableActions.includes('takeDiscard')) return;
+    if (!canAct || hasDrawnCard || !turnData?.availableActions.includes('takeDiscard')) return;
     const result = await performAction('takeDiscard');
     if (!result.success && result.error) {
       toast({ title: result.error, status: 'error', duration: 2000, position: 'top' });
     }
-  }, [canAct, turnData, performAction, toast]);
+  }, [canAct, hasDrawnCard, turnData, performAction, toast]);
 
   const handleBurnCard = useCallback(
     async (slot: string) => {
-      if (!canAct || !turnData?.availableActions.includes('burn')) return;
+      if (!canAct || hasDrawnCard || !turnData?.availableActions.includes('burn')) return;
       const result = await performAction('burn', slot);
       if (!result.success && result.error) {
         toast({ title: result.error, status: 'error', duration: 2000, position: 'top' });
       }
     },
-    [canAct, turnData, performAction, toast],
+    [canAct, hasDrawnCard, turnData, performAction, toast],
+  );
+
+  /** After drawing from deck: click a hand card to swap, or click discard to discard drawn card */
+  const handleDiscardChoice = useCallback(
+    async (slot: string | null) => {
+      if (!canAct || !hasDrawnCard) return;
+      const result = await discardChoice(slot);
+      if (!result.success && result.error) {
+        toast({ title: result.error, status: 'error', duration: 2000, position: 'top' });
+      }
+    },
+    [canAct, hasDrawnCard, discardChoice, toast],
   );
 
   if (!gameState || !playerId) {
@@ -296,18 +320,24 @@ export const GameBoard: FC = () => {
           {/* Draw Pile */}
           <Tooltip
             label={
-              canAct && turnData?.availableActions.includes('drawDeck')
+              canAct && !hasDrawnCard && turnData?.availableActions.includes('drawDeck')
                 ? 'Draw from deck'
-                : !canAct
-                  ? 'Not your turn'
-                  : ''
+                : hasDrawnCard
+                  ? 'Card already drawn'
+                  : !canAct
+                    ? 'Not your turn'
+                    : ''
             }
             isDisabled={!canAct && gameState.phase !== 'playing'}
           >
             <VStack spacing={2}>
               <CardBack
                 size="md"
-                isClickable={canAct && (turnData?.availableActions.includes('drawDeck') ?? false)}
+                isClickable={
+                  canAct &&
+                  !hasDrawnCard &&
+                  (turnData?.availableActions.includes('drawDeck') ?? false)
+                }
                 onClick={handleDrawDeck}
               />
               <Text fontSize="xs" color="gray.400">
@@ -316,14 +346,36 @@ export const GameBoard: FC = () => {
             </VStack>
           </Tooltip>
 
+          {/* Drawn Card (floating between deck and discard) */}
+          {hasDrawnCard && drawnCard && (
+            <Tooltip label="Click a hand card to swap, or click discard to keep hand">
+              <VStack spacing={2}>
+                <Box
+                  borderRadius="md"
+                  border="2px solid"
+                  borderColor="yellow.400"
+                  shadow="0 0 16px rgba(255, 214, 0, 0.4)"
+                  animation="pulse 1.5s ease-in-out infinite"
+                >
+                  <Card card={drawnCard} size="md" />
+                </Box>
+                <Text fontSize="xs" color="yellow.300" fontWeight="bold">
+                  Drawn
+                </Text>
+              </VStack>
+            </Tooltip>
+          )}
+
           {/* Discard Pile */}
           <Tooltip
             label={
-              canAct && turnData?.availableActions.includes('takeDiscard')
-                ? 'Take from discard'
-                : !canAct
-                  ? 'Not your turn'
-                  : ''
+              hasDrawnCard
+                ? 'Discard drawn card'
+                : canAct && turnData?.availableActions.includes('takeDiscard')
+                  ? 'Take from discard'
+                  : !canAct
+                    ? 'Not your turn'
+                    : ''
             }
             isDisabled={!canAct && gameState.phase !== 'playing'}
           >
@@ -332,9 +384,11 @@ export const GameBoard: FC = () => {
                 <Card
                   card={topDiscard}
                   isClickable={
-                    canAct && (turnData?.availableActions.includes('takeDiscard') ?? false)
+                    hasDrawnCard
+                      ? true
+                      : canAct && (turnData?.availableActions.includes('takeDiscard') ?? false)
                   }
-                  onClick={handleTakeDiscard}
+                  onClick={hasDrawnCard ? () => handleDiscardChoice(null) : handleTakeDiscard}
                 />
               ) : (
                 <Box
@@ -342,13 +396,16 @@ export const GameBoard: FC = () => {
                   h="112px"
                   borderRadius="md"
                   border="2px dashed"
-                  borderColor="gray.600"
+                  borderColor={hasDrawnCard ? 'yellow.400' : 'gray.600'}
                   display="flex"
                   alignItems="center"
                   justifyContent="center"
+                  cursor={hasDrawnCard ? 'pointer' : 'default'}
+                  onClick={hasDrawnCard ? () => handleDiscardChoice(null) : undefined}
+                  _hover={hasDrawnCard ? { borderColor: 'yellow.300', shadow: 'lg' } : {}}
                 >
-                  <Text fontSize="xs" color="gray.500">
-                    Empty
+                  <Text fontSize="xs" color={hasDrawnCard ? 'yellow.300' : 'gray.500'}>
+                    {hasDrawnCard ? 'Discard here' : 'Empty'}
                   </Text>
                 </Box>
               )}
@@ -365,6 +422,10 @@ export const GameBoard: FC = () => {
           {gameState.phase === 'peeking' ? (
             <Text fontSize="sm" color="yellow.300" fontWeight="bold">
               Memorizing...
+            </Text>
+          ) : hasDrawnCard ? (
+            <Text fontSize="sm" color="yellow.300" fontWeight="bold">
+              Click a hand card to swap, or click discard to keep hand
             </Text>
           ) : gameState.players[gameState.currentTurnIndex]?.playerId === playerId ? (
             <Heading size="sm" color="yellow.300">
@@ -383,27 +444,40 @@ export const GameBoard: FC = () => {
               const showFaceUp = isPeekedSlot(h.slot) && peekedCard !== null;
               const visibleCard = showFaceUp ? peekedCard : h.card;
               const burnAvailable =
-                canAct && (turnData?.availableActions.includes('burn') ?? false);
+                canAct && !hasDrawnCard && (turnData?.availableActions.includes('burn') ?? false);
+              /** When a drawn card is pending, clicking a hand card swaps it */
+              const swapAvailable = canAct && hasDrawnCard;
+
+              const isClickable = burnAvailable || swapAvailable;
+              const tooltipLabel = swapAvailable
+                ? 'Swap with drawn card'
+                : burnAvailable
+                  ? 'Burn this card'
+                  : '';
+
+              const handleClick = () => {
+                if (swapAvailable) {
+                  handleDiscardChoice(h.slot);
+                } else if (burnAvailable) {
+                  handleBurnCard(h.slot);
+                }
+              };
 
               return (
-                <Tooltip
-                  key={h.slot}
-                  label={burnAvailable ? 'Burn this card' : ''}
-                  isDisabled={!burnAvailable}
-                >
+                <Tooltip key={h.slot} label={tooltipLabel} isDisabled={!isClickable}>
                   <VStack spacing={1}>
                     {visibleCard ? (
                       <Card
                         card={visibleCard}
                         isSelected={isPeekedSlot(h.slot)}
-                        isClickable={burnAvailable}
-                        onClick={() => handleBurnCard(h.slot)}
+                        isClickable={isClickable}
+                        onClick={handleClick}
                       />
                     ) : (
                       <CardBack
                         isSelected={isPeekedSlot(h.slot)}
-                        isClickable={burnAvailable}
-                        onClick={() => handleBurnCard(h.slot)}
+                        isClickable={isClickable}
+                        onClick={handleClick}
                       />
                     )}
                     <Badge colorScheme={isPeekedSlot(h.slot) ? 'yellow' : 'gray'} fontSize="xs">

@@ -55,6 +55,8 @@ const GameStateSchema = new Schema<GameState>(
       enum: ['dealing', 'peeking', 'playing', 'roundEnd', 'gameEnd'],
       default: 'dealing',
     },
+    drawnCard: { type: CardSchema, default: null },
+    drawnByPlayerId: { type: String, default: null },
   },
   { _id: false },
 );

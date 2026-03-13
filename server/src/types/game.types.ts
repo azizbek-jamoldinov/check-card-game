@@ -54,6 +54,10 @@ export interface GameState {
   roundNumber: number;
   scores: Record<string, number>;
   phase: GamePhase;
+  /** Card drawn from deck, pending discard choice (F-037) */
+  drawnCard: Card | null;
+  /** Player who drew the card (F-037) */
+  drawnByPlayerId: string | null;
 }
 
 // ============================================================

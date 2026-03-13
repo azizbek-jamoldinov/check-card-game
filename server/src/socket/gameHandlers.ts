@@ -4,11 +4,13 @@ import { sanitizeGameState } from '../game/GameSetup';
 import {
   validatePlayerTurn,
   getAvailableActions,
+  advanceTurn,
   transitionFromPeeking,
   getCurrentTurnPlayerId,
 } from '../game/TurnManager';
+import { handleDrawFromDeck, processDiscardChoice } from '../game/ActionHandler';
 import { getSocketByPlayer } from './playerMapping';
-import type { GameState, ActionType } from '../types/game.types';
+import type { GameState, ActionType, SlotLabel } from '../types/game.types';
 
 // ============================================================
 // Helper: Broadcast personalized game state to all players (F-036)
@@ -108,7 +110,7 @@ export function registerGameHandlers(io: SocketIOServer, socket: Socket): void {
 
   // ----------------------------------------------------------
   // playerAction — validate turn and route to action handler
-  // (F-033, F-034: Turn validation. Actions implemented in F-037+)
+  // (F-033, F-034, F-037)
   // ----------------------------------------------------------
   socket.on(
     'playerAction',
@@ -139,8 +141,34 @@ export function registerGameHandlers(io: SocketIOServer, socket: Socket): void {
           return;
         }
 
-        // Action-specific handling will be added in Features 7-9
-        // For now, acknowledge the valid action request
+        // ---- Action: drawDeck (F-037) ----
+        if (data.action.type === 'drawDeck') {
+          const drawnCard = handleDrawFromDeck(gameState, data.playerId);
+          if (!drawnCard) {
+            callback?.({ success: false, error: 'Could not draw a card' });
+            return;
+          }
+
+          // Save state with pending drawn card
+          room.gameState = gameState;
+          room.markModified('gameState');
+          await room.save();
+
+          callback?.({ success: true });
+
+          // Send the drawn card privately to the player
+          const playerSocketId = getSocketByPlayer(data.playerId);
+          if (playerSocketId) {
+            io.to(playerSocketId).emit('cardDrawn', { card: drawnCard });
+          }
+
+          console.log(`Room ${data.roomCode}: ${data.playerId} drew a card from deck`);
+          return;
+        }
+
+        // ---- Action: takeDiscard (F-041+) ----
+        // ---- Action: burn (F-044+) ----
+        // Will be implemented in Features 8 and 9
         callback?.({
           success: false,
           error: 'Action processing not yet implemented',
@@ -148,6 +176,72 @@ export function registerGameHandlers(io: SocketIOServer, socket: Socket): void {
       } catch (error) {
         console.error('Error in playerAction:', error);
         callback?.({ success: false, error: 'Failed to process action' });
+      }
+    },
+  );
+
+  // ----------------------------------------------------------
+  // discardChoice — after drawing from deck, choose what to discard
+  // (F-038, F-039, F-040)
+  // ----------------------------------------------------------
+  socket.on(
+    'discardChoice',
+    async (
+      data: {
+        roomCode: string;
+        playerId: string;
+        /** Slot to replace in hand, or null to discard the drawn card */
+        slot: SlotLabel | null;
+      },
+      callback?: (response: { success: boolean; error?: string }) => void,
+    ) => {
+      try {
+        const room = await RoomModel.findOne({ roomCode: data.roomCode });
+        if (!room || !room.gameState) {
+          callback?.({ success: false, error: 'Room or game not found' });
+          return;
+        }
+
+        const gameState = room.gameState as unknown as GameState;
+
+        // Process the discard choice
+        const result = processDiscardChoice(gameState, data.playerId, data.slot);
+        if (!result.success) {
+          callback?.({ success: false, error: result.error });
+          return;
+        }
+
+        // F-040: Check for special effect (red J/Q/K drawn and discarded)
+        if (result.triggersSpecialEffect) {
+          // TODO: Trigger special effect in Feature 10
+          // For now, just log and continue with normal turn advancement
+          console.log(
+            `Room ${data.roomCode}: ${data.playerId} discarded a red face card — special effect stub`,
+          );
+        }
+
+        // Advance turn to the next player
+        advanceTurn(gameState);
+
+        // Save updated state
+        room.gameState = gameState;
+        room.markModified('gameState');
+        await room.save();
+
+        callback?.({ success: true });
+
+        // Broadcast updated game state to all players
+        await broadcastGameState(io, data.roomCode, gameState);
+
+        // Notify the next player it's their turn
+        emitYourTurn(io, gameState);
+
+        console.log(
+          `Room ${data.roomCode}: ${data.playerId} completed discard choice (slot: ${data.slot ?? 'drawn'})`,
+        );
+      } catch (error) {
+        console.error('Error in discardChoice:', error);
+        callback?.({ success: false, error: 'Failed to process discard choice' });
       }
     },
   );

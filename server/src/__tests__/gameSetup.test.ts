@@ -34,6 +34,8 @@ function createTestGameState(overrides: Partial<GameState> = {}): GameState {
     roundNumber: 1,
     scores: {},
     phase: 'playing',
+    drawnCard: null,
+    drawnByPlayerId: null,
     ...overrides,
   };
 }
