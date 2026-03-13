@@ -1,12 +1,13 @@
 import { Server as SocketIOServer, Socket } from 'socket.io';
 import { RoomModel } from '../models/Room';
+import { initializeGameState, sanitizeGameState, getPeekedCards } from '../game/GameSetup';
 import {
   generatePlayerId,
   generateRoomCode,
   validateRoomCode,
   validateUsername,
 } from '../utils/helpers';
-import { registerPlayer, unregisterPlayer } from './playerMapping';
+import { registerPlayer, unregisterPlayer, getSocketByPlayer } from './playerMapping';
 
 // ============================================================
 // Constants
@@ -204,7 +205,7 @@ export function registerRoomHandlers(io: SocketIOServer, socket: Socket): void {
   );
 
   // ----------------------------------------------------------
-  // F-019: Start Game (stub — full game init in Feature 5)
+  // F-019: Start Game (with full game init — Feature 5)
   // ----------------------------------------------------------
   socket.on(
     'startGame',
@@ -246,16 +247,34 @@ export function registerRoomHandlers(io: SocketIOServer, socket: Socket): void {
           return;
         }
 
-        // Update room status to playing (F-021)
+        // Initialize game state (F-028, F-029, F-032)
+        const gameState = initializeGameState(
+          room.players.map((p) => ({ id: p.id, username: p.username })),
+        );
+
+        // Update room in DB
         room.status = 'playing';
+        room.gameState = gameState;
         await room.save();
 
         console.log(`Game started in room ${roomCode} by ${data.playerId}`);
 
         callback?.({ success: true });
-        await broadcastRoomUpdate(io, roomCode);
 
-        // TODO: Initialize game state and emit 'gameStarted' (Feature 5)
+        // Emit 'gameStarted' privately to each player with their own
+        // sanitized state and peeked cards (F-030)
+        for (const player of gameState.players) {
+          const socketId = getSocketByPlayer(player.playerId);
+          if (!socketId) continue;
+
+          const clientState = sanitizeGameState(gameState, player.playerId);
+          const peekedCards = getPeekedCards(player);
+
+          io.to(socketId).emit('gameStarted', {
+            gameState: clientState,
+            peekedCards,
+          });
+        }
       } catch (error) {
         console.error('Error starting game:', error);
         callback?.({ success: false, error: 'Failed to start game' });

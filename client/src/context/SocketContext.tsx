@@ -1,6 +1,16 @@
-import { createContext, useContext, useEffect, useState, useCallback, FC, ReactNode } from 'react';
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useState,
+  useCallback,
+  useRef,
+  FC,
+  ReactNode,
+} from 'react';
+import { useNavigate } from 'react-router-dom';
 import socket from '../services/socket';
-import type { RoomData } from '../types/game.types';
+import type { ClientGameState, PeekedCard, RoomData } from '../types/game.types';
 
 // ============================================================
 // Types
@@ -11,6 +21,8 @@ interface SocketContextValue {
   playerId: string | null;
   username: string | null;
   roomData: RoomData | null;
+  gameState: ClientGameState | null;
+  peekedCards: PeekedCard[] | null;
   createRoom: (username: string) => Promise<{ success: boolean; error?: string }>;
   joinRoom: (roomCode: string, username: string) => Promise<{ success: boolean; error?: string }>;
   leaveRoom: () => void;
@@ -28,10 +40,17 @@ interface SocketProviderProps {
 }
 
 export const SocketProvider: FC<SocketProviderProps> = ({ children }) => {
+  const navigate = useNavigate();
   const [isConnected, setIsConnected] = useState(false);
   const [playerId, setPlayerId] = useState<string | null>(null);
   const [username, setUsername] = useState<string | null>(null);
   const [roomData, setRoomData] = useState<RoomData | null>(null);
+  const [gameState, setGameState] = useState<ClientGameState | null>(null);
+  const [peekedCards, setPeekedCards] = useState<PeekedCard[] | null>(null);
+
+  // Use a ref for navigate to avoid re-registering socket listeners
+  const navigateRef = useRef(navigate);
+  navigateRef.current = navigate;
 
   // Connect socket on mount
   useEffect(() => {
@@ -55,11 +74,19 @@ export const SocketProvider: FC<SocketProviderProps> = ({ children }) => {
       console.error('Socket error:', data.message);
     });
 
+    socket.on('gameStarted', (data: { gameState: ClientGameState; peekedCards: PeekedCard[] }) => {
+      console.log('Game started, peeked cards:', data.peekedCards);
+      setGameState(data.gameState);
+      setPeekedCards(data.peekedCards);
+      navigateRef.current('/game');
+    });
+
     return () => {
       socket.off('connect');
       socket.off('disconnect');
       socket.off('roomUpdated');
       socket.off('error');
+      socket.off('gameStarted');
       socket.disconnect();
     };
   }, []);
@@ -118,6 +145,8 @@ export const SocketProvider: FC<SocketProviderProps> = ({ children }) => {
     setRoomData(null);
     setPlayerId(null);
     setUsername(null);
+    setGameState(null);
+    setPeekedCards(null);
   }, [roomData, playerId]);
 
   // ----------------------------------------------------------
@@ -144,6 +173,8 @@ export const SocketProvider: FC<SocketProviderProps> = ({ children }) => {
     playerId,
     username,
     roomData,
+    gameState,
+    peekedCards,
     createRoom,
     joinRoom,
     leaveRoom,

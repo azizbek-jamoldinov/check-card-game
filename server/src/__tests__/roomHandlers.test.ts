@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { registerRoomHandlers } from '../socket/roomHandlers';
+import { GameState } from '../types/game.types';
 
 // ============================================================
 // Mock RoomModel
@@ -11,7 +12,7 @@ interface MockRoom {
   host: string;
   players: { id: string; username: string }[];
   status: string;
-  gameState: null;
+  gameState: GameState | null;
   save: () => Promise<void>;
 }
 
@@ -398,18 +399,32 @@ describe('roomHandlers', () => {
       );
     });
 
-    it('broadcasts roomUpdated after starting', async () => {
+    it('emits gameStarted privately to connected players', async () => {
       const callback = vi.fn();
       await emitEvent('startGame', { roomCode, playerId: hostId }, callback);
 
-      expect(mockIO.to).toHaveBeenCalledWith(roomCode);
+      // The host is the only player registered via registerPlayer (socket-1),
+      // so io.to should be called with the host socket id.
+      expect(mockIO.to).toHaveBeenCalledWith('socket-1');
       expect(mockIO._toEmit).toHaveBeenCalledWith(
-        'roomUpdated',
+        'gameStarted',
         expect.objectContaining({
-          roomCode,
-          status: 'playing',
+          gameState: expect.objectContaining({
+            deckCount: expect.any(Number),
+            phase: 'peeking',
+          }),
+          peekedCards: expect.any(Array),
         }),
       );
+    });
+
+    it('saves gameState to the room', async () => {
+      const callback = vi.fn();
+      await emitEvent('startGame', { roomCode, playerId: hostId }, callback);
+
+      expect(rooms[roomCode].gameState).not.toBeNull();
+      expect(rooms[roomCode].gameState!.phase).toBe('peeking');
+      expect(rooms[roomCode].gameState!.players).toHaveLength(4);
     });
   });
 });
