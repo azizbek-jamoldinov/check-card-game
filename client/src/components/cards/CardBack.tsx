@@ -1,5 +1,5 @@
 import { FC } from 'react';
-import { Box, Text } from '@chakra-ui/react';
+import { Box } from '@chakra-ui/react';
 
 // ============================================================
 // Types
@@ -17,13 +17,13 @@ export interface CardBackProps {
 // ============================================================
 
 const SIZES = {
-  sm: { w: '52px', h: '74px', label: 'xs', pattern: '6px' },
-  md: { w: '80px', h: '112px', label: 'sm', pattern: '8px' },
-  lg: { w: '100px', h: '140px', label: 'md', pattern: '10px' },
+  sm: { w: '52px', h: '74px', diamond: '8px' },
+  md: { w: '80px', h: '112px', diamond: '12px' },
+  lg: { w: '100px', h: '140px', diamond: '14px' },
 };
 
 // ============================================================
-// CardBack Component
+// CardBack Component — Diamond grid geometric pattern
 // ============================================================
 
 export const CardBack: FC<CardBackProps> = ({
@@ -33,6 +33,16 @@ export const CardBack: FC<CardBackProps> = ({
   size = 'md',
 }) => {
   const s = SIZES[size];
+  const d = s.diamond; // diamond cell size
+
+  // CSS diamond grid via repeating linear gradients
+  // Creates a repeating diamond/rhombus pattern
+  const diamondPattern = [
+    `linear-gradient(45deg, rgba(255,255,255,0.08) 25%, transparent 25%)`,
+    `linear-gradient(-45deg, rgba(255,255,255,0.08) 25%, transparent 25%)`,
+    `linear-gradient(45deg, transparent 75%, rgba(255,255,255,0.08) 75%)`,
+    `linear-gradient(-45deg, transparent 75%, rgba(255,255,255,0.08) 75%)`,
+  ].join(', ');
 
   return (
     <Box
@@ -45,8 +55,13 @@ export const CardBack: FC<CardBackProps> = ({
       cursor={isClickable || onClick ? 'pointer' : 'default'}
       onClick={onClick}
       transition="all 0.2s ease-in-out"
+      transform={isSelected ? 'translateY(-12px)' : 'none'}
       shadow={isSelected ? '0 0 12px rgba(255, 214, 0, 0.5)' : 'sm'}
-      _hover={isClickable || onClick ? { transform: 'translateY(-4px)', shadow: 'lg' } : {}}
+      _hover={
+        isClickable || onClick
+          ? { transform: isSelected ? 'translateY(-14px)' : 'translateY(-4px)', shadow: 'lg' }
+          : {}
+      }
       display="flex"
       alignItems="center"
       justifyContent="center"
@@ -54,48 +69,37 @@ export const CardBack: FC<CardBackProps> = ({
       overflow="hidden"
       userSelect="none"
     >
-      {/* Inner border pattern */}
+      {/* Inner decorative frame */}
       <Box
         position="absolute"
-        inset="4px"
+        inset="3px"
         borderRadius="sm"
-        border="1px solid"
-        borderColor="blue.400"
-        opacity={0.3}
+        border="1.5px solid"
+        borderColor="blue.300"
+        opacity={0.25}
       />
 
-      {/* Diamond pattern in the center */}
+      {/* Diamond grid pattern fill */}
       <Box
         position="absolute"
-        inset="8px"
+        inset="6px"
         borderRadius="sm"
-        display="flex"
-        flexWrap="wrap"
-        alignItems="center"
-        justifyContent="center"
-        gap="2px"
-        overflow="hidden"
-        opacity={0.15}
-      >
-        {Array.from({ length: 20 }).map((_, i) => (
-          <Text key={i} fontSize={s.pattern} color="white" lineHeight={1}>
-            {'\u2666'}
-          </Text>
-        ))}
-      </Box>
+        backgroundImage={diamondPattern}
+        backgroundSize={`${d} ${d}`}
+        backgroundPosition={`0 0, 0 ${parseInt(d) / 2}px, ${parseInt(d) / 2}px -${parseInt(d) / 2}px, ${parseInt(d) / 2}px 0`}
+      />
 
-      {/* Center label */}
-      <Text
-        fontSize={s.label}
-        fontWeight="bold"
-        color="blue.200"
-        opacity={0.6}
-        letterSpacing="wider"
-        textTransform="uppercase"
+      {/* Center diamond accent */}
+      <Box
+        w={`${parseInt(d) + 4}px`}
+        h={`${parseInt(d) + 4}px`}
+        transform="rotate(45deg)"
+        border="1.5px solid"
+        borderColor="blue.200"
+        opacity={0.35}
         zIndex={1}
-      >
-        CHECK
-      </Text>
+        bg="blue.700"
+      />
     </Box>
   );
 };

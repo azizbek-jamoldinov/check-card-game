@@ -18,6 +18,7 @@ import type {
   ActionType,
   SpecialEffectType,
   WaitingForSpecialEffectPayload,
+  SpecialEffectResolvedPayload,
   BurnResultPayload,
   CheckCalledPayload,
   RoundEndedPayload,
@@ -29,7 +30,7 @@ import type { SlotLabel } from '../types/player.types';
 // Debug Mode
 // ============================================================
 
-export const DEBUG_MODE = true;
+export const DEBUG_MODE = false;
 
 // ============================================================
 // Types
@@ -65,6 +66,8 @@ interface SocketContextValue {
   roundEndData: RoundEndedPayload | null;
   /** Game end results, including winner and loser (F-075) */
   gameEndData: GameEndedPayload | null;
+  /** Last Red Jack swap result — both players get notified which slots were swapped */
+  lastSwapResult: SpecialEffectResolvedPayload | null;
   createRoom: (username: string) => Promise<{ success: boolean; error?: string }>;
   joinRoom: (roomCode: string, username: string) => Promise<{ success: boolean; error?: string }>;
   leaveRoom: () => void;
@@ -131,6 +134,7 @@ export const SocketProvider: FC<SocketProviderProps> = ({ children }) => {
   const [drawnFromDiscard, setDrawnFromDiscard] = useState(false);
   const [pendingEffect, setPendingEffect] = useState<WaitingForSpecialEffectPayload | null>(null);
   const [lastBurnResult, setLastBurnResult] = useState<BurnResultPayload | null>(null);
+  const [lastSwapResult, setLastSwapResult] = useState<SpecialEffectResolvedPayload | null>(null);
   const [checkCalledData, setCheckCalledData] = useState<CheckCalledPayload | null>(null);
   const [roundEndData, setRoundEndData] = useState<RoundEndedPayload | null>(null);
   const [gameEndData, setGameEndData] = useState<GameEndedPayload | null>(null);
@@ -228,9 +232,13 @@ export const SocketProvider: FC<SocketProviderProps> = ({ children }) => {
       setPendingEffect(data);
     });
 
-    socket.on('specialEffectResolved', (data: { effect: SpecialEffectType; playerId: string }) => {
+    socket.on('specialEffectResolved', (data: SpecialEffectResolvedPayload) => {
       console.log('Special effect resolved:', data.effect, data.playerId);
       setPendingEffect(null);
+      // Surface Red Jack swap details for toast notification
+      if (data.effect === 'redJack' && !data.skipped) {
+        setLastSwapResult(data);
+      }
     });
 
     socket.on(
@@ -655,6 +663,7 @@ export const SocketProvider: FC<SocketProviderProps> = ({ children }) => {
     drawnFromDiscard,
     pendingEffect,
     lastBurnResult,
+    lastSwapResult,
     checkCalledData,
     roundEndData,
     gameEndData,

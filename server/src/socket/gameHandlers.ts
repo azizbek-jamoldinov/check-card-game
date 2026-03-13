@@ -29,6 +29,18 @@ import { startTurnTimer, clearTurnTimer } from '../game/TurnTimer';
 import type { GameState, ActionType, SlotLabel, Card } from '../types/game.types';
 
 // ============================================================
+// Helper: Format card for logging (e.g. "J♥" or "10♠")
+// ============================================================
+
+function fmtCard(card: Card): string {
+  return `${card.rank}${card.suit}`;
+}
+
+function getUsername(gameState: GameState, playerId: string): string {
+  return gameState.players.find((p) => p.playerId === playerId)?.username ?? playerId;
+}
+
+// ============================================================
 // Helper: Broadcast personalized game state to all players (F-036)
 // ============================================================
 
@@ -131,9 +143,7 @@ async function handleTurnTimeout(io: SocketIOServer, roomCode: string): Promise<
       await broadcastGameState(io, roomCode, gameState);
     }
 
-    console.log(
-      `Room ${roomCode}: ${timedOutPlayer.username} (${timedOutPlayer.playerId}) turn timed out`,
-    );
+    console.log(`Room ${roomCode}: ${timedOutPlayer.username} turn timed out`);
   } catch (error) {
     console.error('Error in handleTurnTimeout:', error);
   } finally {
@@ -337,7 +347,7 @@ export function registerGameHandlers(io: SocketIOServer, socket: Socket): void {
         // Broadcast updated game state (checkCalledBy is now set)
         await broadcastGameState(io, data.roomCode, gameState);
 
-        console.log(`Room ${data.roomCode}: ${checker?.username} (${data.playerId}) called CHECK`);
+        console.log(`Room ${data.roomCode}: ${checker?.username ?? 'Unknown'} called CHECK`);
       } catch (error) {
         console.error('Error in callCheck:', error);
         callback?.({ success: false, error: 'Failed to process check call' });
@@ -402,7 +412,9 @@ export function registerGameHandlers(io: SocketIOServer, socket: Socket): void {
             io.to(playerSocketId).emit('cardDrawn', { card: drawnCard });
           }
 
-          console.log(`Room ${data.roomCode}: ${data.playerId} drew a card from deck`);
+          console.log(
+            `Room ${data.roomCode}: ${getUsername(gameState, data.playerId)} drew ${fmtCard(drawnCard)} from deck`,
+          );
           return;
         }
 
@@ -427,7 +439,9 @@ export function registerGameHandlers(io: SocketIOServer, socket: Socket): void {
             io.to(playerSocketId).emit('cardDrawn', { card: takenCard, fromDiscard: true });
           }
 
-          console.log(`Room ${data.roomCode}: ${data.playerId} took a card from discard`);
+          console.log(
+            `Room ${data.roomCode}: ${getUsername(gameState, data.playerId)} took ${fmtCard(takenCard)} from discard`,
+          );
           return;
         }
 
@@ -444,16 +458,69 @@ export function registerGameHandlers(io: SocketIOServer, socket: Socket): void {
             return;
           }
 
-          // Advance turn after burn (F-048: no special effects from burns)
-          const burnRoundEnded = await advanceTurnAndCheckRoundEnd(
-            io,
-            data.roomCode,
-            room,
-            gameState,
-          );
+          // Check if player burned all cards — round ends immediately
+          const burner = gameState.players.find((p) => p.playerId === data.playerId);
+          const emptyHandRoundEnd = burnResult.burnSuccess && burner && burner.hand.length === 0;
+
+          let burnRoundEnded = false;
+
+          if (emptyHandRoundEnd) {
+            // Player burned all cards — end round immediately
+            clearTurnTimer(data.roomCode);
+
+            const roundResult = computeRoundResult(gameState);
+
+            room.gameState = gameState;
+            room.markModified('gameState');
+            await room.save();
+
+            // Broadcast round results to all players
+            for (const player of gameState.players) {
+              const sid = getSocketByPlayer(player.playerId);
+              if (sid) {
+                io.to(sid).emit('roundEnded', {
+                  roundNumber: roundResult.roundNumber,
+                  checkCalledBy: roundResult.checkCalledBy,
+                  allHands: roundResult.allHands,
+                  roundWinners: roundResult.roundWinners,
+                  checkerDoubled: roundResult.checkerDoubled,
+                  updatedScores: roundResult.updatedScores,
+                  gameEnded: roundResult.gameEnded,
+                  nextRoundStarting: !roundResult.gameEnded,
+                });
+              }
+            }
+
+            if (roundResult.gameEnded) {
+              const gameEndResult = computeGameEndResult(gameState, roundResult.allHands);
+              room.status = 'finished';
+              room.markModified('status');
+              await room.save();
+
+              for (const player of gameState.players) {
+                const sid = getSocketByPlayer(player.playerId);
+                if (sid) {
+                  io.to(sid).emit('gameEnded', gameEndResult);
+                }
+              }
+
+              console.log(
+                `Room ${data.roomCode}: GAME ENDED — Winner: ${gameEndResult.winner.username} (${gameEndResult.winner.score}), Loser: ${gameEndResult.loser.username} (${gameEndResult.loser.score})`,
+              );
+            } else {
+              console.log(
+                `Room ${data.roomCode}: Round ${roundResult.roundNumber} ended — ${getUsername(gameState, data.playerId)} burned all cards. Waiting for host to start next round.`,
+              );
+            }
+
+            burnRoundEnded = true;
+          } else {
+            // Normal flow — advance turn and check for check-based round end
+            burnRoundEnded = await advanceTurnAndCheckRoundEnd(io, data.roomCode, room, gameState);
+          }
 
           if (!burnRoundEnded) {
-            // Save updated state (only if round didn't end — advanceTurnAndCheckRoundEnd handles save on round end)
+            // Save updated state (only if round didn't end)
             room.gameState = gameState;
             room.markModified('gameState');
             await room.save();
@@ -486,7 +553,7 @@ export function registerGameHandlers(io: SocketIOServer, socket: Socket): void {
           }
 
           console.log(
-            `Room ${data.roomCode}: ${data.playerId} burn ${burnResult.burnSuccess ? 'SUCCESS' : 'FAIL'} at slot ${data.action.slot}`,
+            `Room ${data.roomCode}: ${getUsername(gameState, data.playerId)} burn ${burnResult.burnSuccess ? 'SUCCESS' : 'FAIL'} at slot ${data.action.slot}${burnResult.burnedCard ? ` (${fmtCard(burnResult.burnedCard)})` : ''}`,
           );
           return;
         }
@@ -600,7 +667,7 @@ export function registerGameHandlers(io: SocketIOServer, socket: Socket): void {
               }
 
               console.log(
-                `Room ${data.roomCode}: ${data.playerId} triggered ${effectType} special effect`,
+                `Room ${data.roomCode}: ${getUsername(gameState, data.playerId)} triggered ${effectType} special effect (${result.discardedCard ? fmtCard(result.discardedCard) : 'unknown'})`,
               );
               return;
             }
@@ -633,7 +700,7 @@ export function registerGameHandlers(io: SocketIOServer, socket: Socket): void {
         }
 
         console.log(
-          `Room ${data.roomCode}: ${data.playerId} completed discard choice (slot: ${data.slot ?? 'drawn'})`,
+          `Room ${data.roomCode}: ${getUsername(gameState, data.playerId)} completed discard choice — discarded ${result.discardedCard ? fmtCard(result.discardedCard) : 'unknown'} (slot: ${data.slot ?? 'drawn'})`,
         );
       } catch (error) {
         console.error('Error in discardChoice:', error);
@@ -761,7 +828,15 @@ export function registerGameHandlers(io: SocketIOServer, socket: Socket): void {
 
         callback?.({ success: true });
 
-        // Broadcast swap notification (no card details revealed)
+        // Broadcast swap notification — include slot details so both players know
+        const swapperUsername =
+          gameState.players.find((p) => p.playerId === data.playerId)?.username ?? 'Unknown';
+        const targetUsername =
+          !data.skip && data.targetPlayerId
+            ? (gameState.players.find((p) => p.playerId === data.targetPlayerId)?.username ??
+              'Unknown')
+            : undefined;
+
         for (const player of gameState.players) {
           const sid = getSocketByPlayer(player.playerId);
           if (sid) {
@@ -769,6 +844,14 @@ export function registerGameHandlers(io: SocketIOServer, socket: Socket): void {
               effect: 'redJack',
               playerId: data.playerId,
               skipped: data.skip === true,
+              // Include swap details when not skipped
+              ...(!data.skip && {
+                swapperSlot: data.mySlot,
+                swapperUsername,
+                targetPlayerId: data.targetPlayerId,
+                targetSlot: data.targetSlot,
+                targetUsername,
+              }),
             });
           }
         }
@@ -782,7 +865,7 @@ export function registerGameHandlers(io: SocketIOServer, socket: Socket): void {
         }
 
         console.log(
-          `Room ${data.roomCode}: ${data.playerId} Red Jack ${data.skip ? 'skipped' : 'swapped'}`,
+          `Room ${data.roomCode}: ${getUsername(gameState, data.playerId)} Red Jack ${data.skip ? 'skipped' : `swapped slot ${data.mySlot} with ${getUsername(gameState, data.targetPlayerId ?? '')} slot ${data.targetSlot}`}`,
         );
       } catch (error) {
         console.error('Error in redJackSwap:', error);
@@ -866,7 +949,7 @@ export function registerGameHandlers(io: SocketIOServer, socket: Socket): void {
         }
 
         console.log(
-          `Room ${data.roomCode}: ${data.playerId} Red Queen peeked at slot ${data.slot}`,
+          `Room ${data.roomCode}: ${getUsername(gameState, data.playerId)} Red Queen peeked at slot ${data.slot}${peekResult.card ? ` (${fmtCard(peekResult.card)})` : ''}`,
         );
       } catch (error) {
         console.error('Error in redQueenPeek:', error);
@@ -969,7 +1052,9 @@ export function registerGameHandlers(io: SocketIOServer, socket: Socket): void {
           await broadcastGameState(io, data.roomCode, gameState);
         }
 
-        console.log(`Room ${data.roomCode}: ${data.playerId} Red King choice: ${data.choice.type}`);
+        console.log(
+          `Room ${data.roomCode}: ${getUsername(gameState, data.playerId)} Red King choice: ${data.choice.type} (drew ${fmtCard(redKingCards[0])}, ${fmtCard(redKingCards[1])})`,
+        );
       } catch (error) {
         console.error('Error in redKingChoice:', error);
         callback?.({ success: false, error: 'Failed to process Red King choice' });
@@ -1048,7 +1133,9 @@ export function registerGameHandlers(io: SocketIOServer, socket: Socket): void {
           });
         }
 
-        console.log(`Room ${data.roomCode}: Host started new round ${newGameState.roundNumber}`);
+        console.log(
+          `Room ${data.roomCode}: ${getUsername(newGameState, data.playerId)} started new round ${newGameState.roundNumber}`,
+        );
       } catch (error) {
         console.error('Error in startNextRound:', error);
         callback?.({ success: false, error: 'Failed to start next round' });

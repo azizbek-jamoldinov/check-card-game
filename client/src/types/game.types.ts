@@ -101,6 +101,12 @@ export interface SpecialEffectResolvedPayload {
   skipped?: boolean;
   cardsKept?: number;
   discardedCards?: Card[];
+  // Red Jack swap details (included when not skipped)
+  swapperSlot?: string;
+  swapperUsername?: string;
+  targetPlayerId?: string;
+  targetSlot?: string;
+  targetUsername?: string;
 }
 
 // ============================================================
@@ -122,7 +128,7 @@ export interface PlayerRoundResult {
 
 export interface RoundEndedPayload {
   roundNumber: number;
-  checkCalledBy: string;
+  checkCalledBy: string | null;
   allHands: PlayerRoundResult[];
   roundWinners: string[];
   /** True if the checker's hand sum was doubled (checker was not the lowest) */

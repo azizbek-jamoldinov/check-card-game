@@ -219,6 +219,39 @@ Derived from PLAN.md. Features are grouped by domain and ordered by implementati
 
 ---
 
+## UI/UX Improvements
+
+### 28. Card Back Redesign
+
+- [x] **UI-001**: Replace "CHECK" text on card backs with a diamond grid geometric pattern to avoid confusion with the Call CHECK action
+
+### 29. Card Selection Lift
+
+- [x] **UI-002**: Selected cards lift upward (translateY -12px) to visually indicate selection state
+
+### 30. Safe Area Handling
+
+- [x] **UI-003**: Add `env(safe-area-inset-bottom)` padding and `viewport-fit=cover` meta tag for mobile notch/nav bar protection
+
+### 31. Haptic Feedback
+
+- [x] **UI-004**: Trigger vibration API — success pulse on burn success, warning double-pulse on penalty, subtle tap on draw/swap
+
+### 32. Final Round Banner
+
+- [x] **UI-005**: Sticky high-contrast red banner when CHECK is called: "[NAME] CALLED CHECK — FINAL TURN"
+
+### 33. Red Card Flash Effect
+
+- [x] **UI-006**: Brief full-screen red tint/flash overlay when a Red J/Q/K special effect triggers
+
+### 34. Framer Motion Transitions
+
+- [x] **UI-007**: Modal slide-in animations via `motionPreset="slideInBottom"` on all game modals
+- [x] **UI-008**: Card flip animation (CSS 3D rotateY) for initial peek and Red Queen peek reveals
+
+---
+
 ## Phase 2: Post-MVP
 
 ### Stability

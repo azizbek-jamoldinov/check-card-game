@@ -458,6 +458,58 @@ describe('computeRoundResult', () => {
     expect(result.updatedScores[gs.players[0].playerId]).toBe(20);
     expect(result.updatedScores[gs.players[1].playerId]).toBe(35);
   });
+
+  // ============================================================
+  // Empty-hand round end (no checker)
+  // ============================================================
+
+  it('handles round end with no checker (empty-hand round end)', () => {
+    const gs = createPlayingGameState(3);
+    gs.checkCalledBy = null;
+    gs.scores = {
+      [gs.players[0].playerId]: 10,
+      [gs.players[1].playerId]: 20,
+      [gs.players[2].playerId]: 15,
+    };
+
+    // Player 0 burned all cards → sum = 0 (winner)
+    gs.players[0].hand = [];
+    // Player 1: sum = 10
+    setPlayerHand(gs, 1, [makeCard('5', '♥', 5), makeCard('5', '♦', 5)]);
+    // Player 2: sum = 6
+    setPlayerHand(gs, 2, [makeCard('3', '♥', 3), makeCard('3', '♦', 3)]);
+
+    const result = computeRoundResult(gs);
+
+    expect(result.checkCalledBy).toBeNull();
+    expect(result.checkerDoubled).toBe(false);
+    expect(result.roundWinners).toEqual([gs.players[0].playerId]);
+    // Winner scores 0 → stays at 10
+    expect(result.updatedScores[gs.players[0].playerId]).toBe(10);
+    // No doubling — everyone adds their hand sum normally
+    expect(result.updatedScores[gs.players[1].playerId]).toBe(30); // 20 + 10
+    expect(result.updatedScores[gs.players[2].playerId]).toBe(21); // 15 + 6
+  });
+
+  it('no checker doubling when checkCalledBy is null', () => {
+    const gs = createPlayingGameState(2);
+    gs.checkCalledBy = null;
+    gs.scores = {
+      [gs.players[0].playerId]: 0,
+      [gs.players[1].playerId]: 0,
+    };
+
+    // Player 0 burned all cards → sum = 0
+    gs.players[0].hand = [];
+    // Player 1: sum = 20
+    setPlayerHand(gs, 1, [makeCard('10', '♠', 10), makeCard('10', '♣', 10)]);
+
+    const result = computeRoundResult(gs);
+
+    expect(result.checkerDoubled).toBe(false);
+    // Player 1 adds their normal sum (not doubled)
+    expect(result.updatedScores[gs.players[1].playerId]).toBe(20);
+  });
 });
 
 // ============================================================

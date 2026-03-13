@@ -204,8 +204,13 @@ export const Card: FC<CardProps> = ({
       cursor={isClickable || onClick ? 'pointer' : 'default'}
       onClick={onClick}
       transition="all 0.2s ease-in-out"
+      transform={isSelected ? 'translateY(-12px)' : 'none'}
       shadow={isSelected ? '0 0 12px rgba(255, 214, 0, 0.5)' : 'sm'}
-      _hover={isClickable || onClick ? { transform: 'translateY(-4px)', shadow: 'lg' } : {}}
+      _hover={
+        isClickable || onClick
+          ? { transform: isSelected ? 'translateY(-14px)' : 'translateY(-4px)', shadow: 'lg' }
+          : {}
+      }
       display="flex"
       flexDirection="column"
       position="relative"

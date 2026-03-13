@@ -26,7 +26,7 @@ export interface PlayerRoundResult {
 
 export interface RoundResult {
   roundNumber: number;
-  checkCalledBy: string;
+  checkCalledBy: string | null;
   allHands: PlayerRoundResult[];
   /** PlayerIds of the round winner(s) — lowest sum scores 0 */
   roundWinners: string[];
@@ -66,8 +66,8 @@ export function computeRoundResult(gameState: GameState): RoundResult {
   // Determine winners — all players tied at minSum
   const roundWinners = allHands.filter((h) => h.handSum === minSum).map((h) => h.playerId);
 
-  const checkerId = gameState.checkCalledBy!;
-  const checkerIsWinner = roundWinners.includes(checkerId);
+  const checkerId = gameState.checkCalledBy ?? null;
+  const checkerIsWinner = checkerId ? roundWinners.includes(checkerId) : true;
 
   // Update scores
   const updatedScores: Record<string, number> = { ...gameState.scores };
@@ -77,7 +77,7 @@ export function computeRoundResult(gameState: GameState): RoundResult {
       if (updatedScores[hand.playerId] === undefined) {
         updatedScores[hand.playerId] = 0;
       }
-    } else if (hand.playerId === checkerId && !checkerIsWinner) {
+    } else if (checkerId && hand.playerId === checkerId && !checkerIsWinner) {
       // Checker is NOT the lowest — double their hand sum
       updatedScores[hand.playerId] = (updatedScores[hand.playerId] ?? 0) + hand.handSum * 2;
     } else {
@@ -99,10 +99,10 @@ export function computeRoundResult(gameState: GameState): RoundResult {
 
   return {
     roundNumber: gameState.roundNumber,
-    checkCalledBy: gameState.checkCalledBy!,
+    checkCalledBy: checkerId,
     allHands,
     roundWinners,
-    checkerDoubled: !checkerIsWinner,
+    checkerDoubled: checkerId ? !checkerIsWinner : false,
     updatedScores,
     gameEnded,
   };

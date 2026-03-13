@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback, FC } from 'react';
+import { AnimatePresence, motion } from 'framer-motion';
 import {
   Box,
   Button,
@@ -33,7 +34,9 @@ import { DEBUG_MODE } from '../context/SocketContext';
 import socket from '../services/socket';
 import { Card } from '../components/cards/Card';
 import { CardBack } from '../components/cards/CardBack';
-import { playPickSound } from '../utils/sound';
+import { FlippableCard } from '../components/cards/FlippableCard';
+import { playPickSound, playBurnSound, playSwapSound, playWinSound } from '../utils/sound';
+import { vibrateTap, vibrateSuccess, vibrateWarning } from '../utils/haptics';
 import type { Card as CardType } from '../types/card.types';
 import type { ClientHandSlot, ClientPlayerState } from '../types/player.types';
 import type { PeekedCard, PlayerRoundResult } from '../types/game.types';
@@ -146,6 +149,7 @@ export const GameBoard: FC = () => {
     drawnFromDiscard,
     pendingEffect,
     lastBurnResult,
+    lastSwapResult,
     checkCalledData,
     roundEndData,
     gameEndData,
@@ -190,6 +194,22 @@ export const GameBoard: FC = () => {
   // Turn timer countdown state (seconds remaining)
   const [turnTimeLeft, setTurnTimeLeft] = useState<number | null>(null);
   const TURN_TIMEOUT_SECS = 30;
+
+  // Red card flash state (UI-006)
+  const [showRedFlash, setShowRedFlash] = useState(false);
+
+  // Trigger red flash when a red face card special effect activates
+  useEffect(() => {
+    if (
+      pendingEffect?.effect === 'redJack' ||
+      pendingEffect?.effect === 'redQueen' ||
+      pendingEffect?.effect === 'redKing'
+    ) {
+      setShowRedFlash(true);
+      const timer = setTimeout(() => setShowRedFlash(false), 400);
+      return () => clearTimeout(timer);
+    }
+  }, [pendingEffect]);
 
   const toggleDebugRevealAll = useCallback(async () => {
     if (!DEBUG_MODE || !gameState) return;
@@ -295,8 +315,10 @@ export const GameBoard: FC = () => {
         ? 'You'
         : (gameState?.players.find((p) => p.playerId === lastBurnResult.playerId)?.username ??
           'Someone');
+    playBurnSound();
     if (lastBurnResult.burnSuccess) {
       const c = lastBurnResult.burnedCard;
+      vibrateSuccess();
       toast({
         title: `${burnerName === 'You' ? 'Burn success!' : `${burnerName} burned a card!`}`,
         description: c ? `${c.rank}${c.suit} removed from slot ${lastBurnResult.slot}` : undefined,
@@ -305,6 +327,7 @@ export const GameBoard: FC = () => {
         position: 'top',
       });
     } else {
+      vibrateWarning();
       toast({
         title: `${burnerName === 'You' ? 'Burn failed!' : `${burnerName} failed to burn`}`,
         description: lastBurnResult.penaltySlot
@@ -316,6 +339,40 @@ export const GameBoard: FC = () => {
       });
     }
   }, [lastBurnResult, playerId, gameState?.players, toast]);
+
+  // Red Jack swap toast notification
+  useEffect(() => {
+    if (!lastSwapResult) return;
+    const { swapperSlot, swapperUsername, targetPlayerId, targetSlot, targetUsername } =
+      lastSwapResult;
+    if (!swapperSlot || !targetSlot) return;
+
+    playSwapSound();
+    let title: string;
+    let description: string;
+
+    if (lastSwapResult.playerId === playerId) {
+      // I am the swapper
+      title = 'Card Swapped!';
+      description = `You swapped slot ${swapperSlot} with ${targetUsername}'s slot ${targetSlot}`;
+    } else if (targetPlayerId === playerId) {
+      // I am the target
+      title = 'Card Swapped!';
+      description = `${swapperUsername} swapped their slot ${swapperSlot} with your slot ${targetSlot}`;
+    } else {
+      // I am a bystander
+      title = 'Card Swap';
+      description = `${swapperUsername} swapped a card with ${targetUsername}`;
+    }
+
+    toast({
+      title,
+      description,
+      status: 'info',
+      duration: 3000,
+      position: 'top',
+    });
+  }, [lastSwapResult, playerId, toast]);
 
   // Check called toast notification (F-062)
   useEffect(() => {
@@ -346,6 +403,23 @@ export const GameBoard: FC = () => {
     leaveRoom();
     navigate('/');
   }, [clearGameEndData, clearRoundEndData, leaveRoom, navigate]);
+
+  // Play win sound for round winners (skip if game also ended — gameEnded effect handles that)
+  useEffect(() => {
+    if (!roundEndData || !playerId) return;
+    if (roundEndData.gameEnded) return;
+    if (roundEndData.roundWinners.includes(playerId)) {
+      playWinSound();
+    }
+  }, [roundEndData, playerId]);
+
+  // Play win sound for the game winner
+  useEffect(() => {
+    if (!gameEndData || !playerId) return;
+    if (gameEndData.winner.playerId === playerId) {
+      playWinSound();
+    }
+  }, [gameEndData, playerId]);
 
   // Peek countdown — when timer expires, call endPeek to transition to playing (F-031, F-033)
   useEffect(() => {
@@ -405,6 +479,7 @@ export const GameBoard: FC = () => {
       toast({ title: result.error, status: 'error', duration: 2000, position: 'top' });
     } else if (result.success) {
       playPickSound();
+      vibrateTap();
     }
   }, [canAct, hasDrawnCard, turnData, performAction, toast]);
 
@@ -415,6 +490,7 @@ export const GameBoard: FC = () => {
       toast({ title: result.error, status: 'error', duration: 2000, position: 'top' });
     } else if (result.success) {
       playPickSound();
+      vibrateTap();
     }
   }, [canAct, hasDrawnCard, turnData, performAction, toast]);
 
@@ -426,6 +502,7 @@ export const GameBoard: FC = () => {
         toast({ title: result.error, status: 'error', duration: 2000, position: 'top' });
       } else if (result.success) {
         playPickSound();
+        vibrateTap();
       }
     },
     [canAct, hasDrawnCard, turnData, performAction, toast],
@@ -440,6 +517,7 @@ export const GameBoard: FC = () => {
         toast({ title: result.error, status: 'error', duration: 2000, position: 'top' });
       } else if (result.success) {
         playPickSound();
+        vibrateTap();
         toast({
           title: slot !== null ? `Swapped card into slot ${slot}` : 'Drawn card discarded',
           status: 'info',
@@ -611,7 +689,31 @@ export const GameBoard: FC = () => {
       flexDirection="column"
       position="relative"
       overflow="hidden"
+      pb="env(safe-area-inset-bottom)"
     >
+      {/* Red card flash overlay (UI-006) */}
+      <AnimatePresence>
+        {showRedFlash && (
+          <motion.div
+            key="red-flash"
+            initial={{ opacity: 0.4 }}
+            animate={{ opacity: 0 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.4, ease: 'easeOut' }}
+            style={{
+              position: 'fixed',
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              backgroundColor: '#E53E3E',
+              pointerEvents: 'none',
+              zIndex: 50,
+            }}
+          />
+        )}
+      </AnimatePresence>
+
       {/* Peek overlay / countdown */}
       {isPeeking && peekedCards && peekedCards.length > 0 && (
         <Box
@@ -740,6 +842,29 @@ export const GameBoard: FC = () => {
           />
         </HStack>
       </Flex>
+
+      {/* Final Round banner (UI-005) */}
+      {checkCalledData && (
+        <Box
+          bg="red.600"
+          px={4}
+          py={2}
+          textAlign="center"
+          flexShrink={0}
+          animation="pulse 2s ease-in-out infinite"
+        >
+          <Text
+            fontSize={{ base: 'sm', md: 'md' }}
+            fontWeight="bold"
+            color="white"
+            textTransform="uppercase"
+            letterSpacing="wider"
+          >
+            {checkCalledData.playerId === playerId ? 'YOU' : checkCalledData.username.toUpperCase()}{' '}
+            CALLED CHECK — FINAL TURN
+          </Text>
+        </Box>
+      )}
 
       {/* Main game area */}
       <Grid
@@ -919,7 +1044,7 @@ export const GameBoard: FC = () => {
         </Flex>
 
         {/* Bottom: Player's hand + actions */}
-        <VStack spacing={2}>
+        <VStack spacing={2} minW={0} overflow="hidden">
           {/* Turn indicator + Check button */}
           {gameState.phase === 'peeking' ? (
             <Text fontSize="sm" color="yellow.300" fontWeight="bold">
@@ -981,9 +1106,26 @@ export const GameBoard: FC = () => {
             </Box>
           )}
 
-          {/* Hand — scrollable so penalty cards don't overflow */}
-          <Box w="100%" overflowX="auto" pb={1}>
-            <HStack spacing={{ base: 2, md: 3 }} justify="center" minW="min-content">
+          {/* Hand — horizontal scroll when > 4 cards, centered otherwise */}
+          <Box
+            w="100%"
+            overflowX="auto"
+            pb={1}
+            pt={3}
+            sx={{
+              /* Hide scrollbar but keep scrolling */
+              '&::-webkit-scrollbar': { display: 'none' },
+              scrollbarWidth: 'none',
+              msOverflowStyle: 'none',
+              WebkitOverflowScrolling: 'touch',
+            }}
+          >
+            <HStack
+              spacing={{ base: 2, md: 3 }}
+              justify={myPlayer.hand.length > 4 ? 'flex-start' : 'center'}
+              w={myPlayer.hand.length > 4 ? 'max-content' : '100%'}
+              px={myPlayer.hand.length > 4 ? 2 : 0}
+            >
               {myPlayer.hand.map((h: ClientHandSlot) => {
                 const peekedCard = getPeekedCardForSlot(h.slot);
                 const showFaceUp = isPeekedSlot(h.slot) && peekedCard !== null;
@@ -992,7 +1134,6 @@ export const GameBoard: FC = () => {
                 const visibleCard = showFaceUp ? peekedCard : (debugCard ?? h.card);
                 const burnAvailable =
                   canAct && !hasDrawnCard && (turnData?.availableActions.includes('burn') ?? false);
-                /** When a drawn card is pending, clicking a hand card swaps it */
                 const swapAvailable = canAct && hasDrawnCard;
 
                 const isClickable = burnAvailable || swapAvailable;
@@ -1012,8 +1153,16 @@ export const GameBoard: FC = () => {
 
                 return (
                   <Tooltip key={h.slot} label={tooltipLabel} isDisabled={!isClickable}>
-                    <VStack spacing={1} position="relative">
-                      {visibleCard ? (
+                    <VStack spacing={1} position="relative" flexShrink={0}>
+                      {showFaceUp && peekedCard ? (
+                        <FlippableCard
+                          card={peekedCard}
+                          isFaceUp={true}
+                          isSelected={true}
+                          isClickable={isClickable}
+                          onClick={handleClick}
+                        />
+                      ) : visibleCard ? (
                         <Card
                           card={visibleCard}
                           isSelected={isPeekedSlot(h.slot)}
@@ -1052,6 +1201,7 @@ export const GameBoard: FC = () => {
         onClose={() => setShowLeaderboard(false)}
         isCentered
         size="sm"
+        motionPreset="slideInBottom"
       >
         <ModalOverlay bg="blackAlpha.600" />
         <ModalContent bg="gray.800" color="white">
@@ -1106,6 +1256,7 @@ export const GameBoard: FC = () => {
         onClose={() => setPendingBurnSlot(null)}
         isCentered
         size="xs"
+        motionPreset="slideInBottom"
       >
         <ModalOverlay bg="blackAlpha.600" />
         <ModalContent bg="gray.800" color="white">
@@ -1148,6 +1299,7 @@ export const GameBoard: FC = () => {
         closeOnOverlayClick={false}
         closeOnEsc={false}
         size={{ base: 'sm', md: 'md' }}
+        motionPreset="slideInBottom"
       >
         <ModalOverlay bg="blackAlpha.700" />
         <ModalContent bg="gray.800" color="white">
@@ -1261,6 +1413,7 @@ export const GameBoard: FC = () => {
         closeOnOverlayClick={false}
         closeOnEsc={false}
         size={{ base: 'sm', md: 'md' }}
+        motionPreset="slideInBottom"
       >
         <ModalOverlay bg="blackAlpha.700" />
         <ModalContent bg="gray.800" color="white">
@@ -1279,14 +1432,13 @@ export const GameBoard: FC = () => {
                 <Text fontSize="sm" color="yellow.300" fontWeight="bold">
                   Memorize this card! ({queenPeekTimer ? '3s' : '...'})
                 </Text>
-                <Box
-                  mx="auto"
-                  border="2px solid"
-                  borderColor="yellow.400"
-                  borderRadius="md"
-                  shadow="0 0 16px rgba(255, 214, 0, 0.4)"
-                >
-                  <Card card={queenPeekedCard} size="lg" />
+                <Box mx="auto">
+                  <FlippableCard
+                    card={queenPeekedCard}
+                    isFaceUp={true}
+                    isSelected={true}
+                    size="lg"
+                  />
                 </Box>
               </VStack>
             ) : (
@@ -1325,6 +1477,7 @@ export const GameBoard: FC = () => {
         closeOnOverlayClick={false}
         closeOnEsc={false}
         size={{ base: 'sm', md: 'lg' }}
+        motionPreset="slideInBottom"
       >
         <ModalOverlay bg="blackAlpha.700" />
         <ModalContent bg="gray.800" color="white">
@@ -1506,6 +1659,7 @@ export const GameBoard: FC = () => {
         closeOnOverlayClick={false}
         closeOnEsc={false}
         size={{ base: 'md', md: 'lg' }}
+        motionPreset="slideInBottom"
       >
         <ModalOverlay bg="blackAlpha.800" />
         <ModalContent bg="gray.800" color="white" maxH="90vh" overflow="auto">
@@ -1514,12 +1668,22 @@ export const GameBoard: FC = () => {
               Round {roundEndData?.roundNumber} Complete
             </Heading>
             <Text fontSize="sm" color="gray.400" fontWeight="normal" mt={1}>
-              {roundEndData?.checkCalledBy === playerId
-                ? 'You'
-                : (gameState?.players.find((p) => p.playerId === roundEndData?.checkCalledBy)
-                    ?.username ?? 'Someone')}{' '}
-              called check
-              {roundEndData?.checkerDoubled ? ' (score doubled!)' : ''}
+              {roundEndData?.checkCalledBy ? (
+                <>
+                  {roundEndData.checkCalledBy === playerId
+                    ? 'You'
+                    : (gameState?.players.find((p) => p.playerId === roundEndData.checkCalledBy)
+                        ?.username ?? 'Someone')}{' '}
+                  called check
+                  {roundEndData.checkerDoubled ? ' (score doubled!)' : ''}
+                </>
+              ) : (
+                <>
+                  {roundEndData?.roundWinners.includes(playerId ?? '')
+                    ? 'You burned all your cards!'
+                    : `${gameState?.players.find((p) => roundEndData?.roundWinners.includes(p.playerId))?.username ?? 'Someone'} burned all their cards!`}
+                </>
+              )}
             </Text>
           </ModalHeader>
           <ModalBody>
@@ -1679,6 +1843,7 @@ export const GameBoard: FC = () => {
         closeOnOverlayClick={false}
         closeOnEsc={false}
         size={{ base: 'md', md: 'lg' }}
+        motionPreset="slideInBottom"
       >
         <ModalOverlay bg="blackAlpha.800" />
         <ModalContent bg="gray.800" color="white" maxH="90vh" overflow="auto">
