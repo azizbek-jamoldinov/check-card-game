@@ -39,6 +39,7 @@ interface YourTurnData {
   playerId: string;
   canCheck: boolean;
   availableActions: ActionType[];
+  turnStartedAt?: number;
 }
 
 interface SocketContextValue {
@@ -138,6 +139,10 @@ export const SocketProvider: FC<SocketProviderProps> = ({ children }) => {
   const navigateRef = useRef(navigate);
   navigateRef.current = navigate;
 
+  // Use a ref for playerId so socket listeners always have the latest value
+  const playerIdRef = useRef(playerId);
+  playerIdRef.current = playerId;
+
   // Connect socket on mount
   useEffect(() => {
     socket.connect();
@@ -179,20 +184,32 @@ export const SocketProvider: FC<SocketProviderProps> = ({ children }) => {
     socket.on('gameStateUpdated', (data: ClientGameState) => {
       console.log('Game state updated, phase:', data.phase);
       setGameState(data);
-      // Clear drawn card — turn has ended or state changed
-      setDrawnCard(null);
-      setDrawnFromDiscard(false);
-      // Clear burn result from previous turn
-      setLastBurnResult(null);
-      // Reset turn state — will be re-set by 'yourTurn' if it's still our turn
-      setIsMyTurn(false);
-      setTurnData(null);
+
+      // Determine if it's still this player's turn based on game state
+      const currentTurnPlayer = data.players[data.currentTurnIndex];
+      const stillMyTurn = currentTurnPlayer?.playerId === playerIdRef.current;
+
+      if (!stillMyTurn) {
+        // Turn has changed to another player — clear turn state
+        setIsMyTurn(false);
+        setTurnData(null);
+        // Clear drawn card — our turn has ended
+        setDrawnCard(null);
+        setDrawnFromDiscard(false);
+        // Clear burn result from previous turn
+        setLastBurnResult(null);
+      }
     });
 
     socket.on('yourTurn', (data: YourTurnData) => {
       console.log('Your turn!', data);
       setIsMyTurn(true);
       setTurnData(data);
+      // Also update gameState.turnStartedAt as fallback in case
+      // gameStateUpdated arrives before emitYourTurn sets the timestamp
+      if (data.turnStartedAt != null) {
+        setGameState((prev) => (prev ? { ...prev, turnStartedAt: data.turnStartedAt! } : prev));
+      }
     });
 
     socket.on('cardDrawn', (data: { card: Card; fromDiscard?: boolean }) => {
@@ -267,6 +284,11 @@ export const SocketProvider: FC<SocketProviderProps> = ({ children }) => {
       setTurnData(null);
     });
 
+    // Turn timed out — auto-skip notification
+    socket.on('turnTimedOut', (data: { playerId: string; username: string }) => {
+      console.log(`${data.username} (${data.playerId}) turn timed out`);
+    });
+
     return () => {
       socket.off('connect');
       socket.off('disconnect');
@@ -284,6 +306,7 @@ export const SocketProvider: FC<SocketProviderProps> = ({ children }) => {
       socket.off('checkCalled');
       socket.off('roundEnded');
       socket.off('gameEnded');
+      socket.off('turnTimedOut');
       socket.disconnect();
     };
   }, []);

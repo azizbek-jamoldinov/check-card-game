@@ -33,6 +33,7 @@ import { DEBUG_MODE } from '../context/SocketContext';
 import socket from '../services/socket';
 import { Card } from '../components/cards/Card';
 import { CardBack } from '../components/cards/CardBack';
+import { playPickSound } from '../utils/sound';
 import type { Card as CardType } from '../types/card.types';
 import type { ClientHandSlot, ClientPlayerState } from '../types/player.types';
 import type { PeekedCard, PlayerRoundResult } from '../types/game.types';
@@ -180,6 +181,16 @@ export const GameBoard: FC = () => {
 
   const [debugRevealAll, setDebugRevealAll] = useState(false);
 
+  // Burn confirmation modal state
+  const [pendingBurnSlot, setPendingBurnSlot] = useState<string | null>(null);
+
+  // Leaderboard modal state
+  const [showLeaderboard, setShowLeaderboard] = useState(false);
+
+  // Turn timer countdown state (seconds remaining)
+  const [turnTimeLeft, setTurnTimeLeft] = useState<number | null>(null);
+  const TURN_TIMEOUT_SECS = 30;
+
   const toggleDebugRevealAll = useCallback(async () => {
     if (!DEBUG_MODE || !gameState) return;
     if (debugRevealAll) {
@@ -232,6 +243,49 @@ export const GameBoard: FC = () => {
       socket.off('playerLeftGame', handler);
     };
   }, [toast]);
+
+  // Listen for turn timeout notifications
+  useEffect(() => {
+    const handler = (data: { playerId: string; username: string }) => {
+      const isMe = data.playerId === playerId;
+      toast({
+        title: isMe ? 'Your turn timed out!' : `${data.username}'s turn timed out`,
+        status: 'warning',
+        duration: 2500,
+        position: 'top',
+      });
+    };
+    socket.on('turnTimedOut', handler);
+    return () => {
+      socket.off('turnTimedOut', handler);
+    };
+  }, [playerId, toast]);
+
+  // Turn timer countdown — derived from gameState.turnStartedAt
+  // Timer is paused (hidden) during special effect prompts
+  useEffect(() => {
+    if (!gameState?.turnStartedAt || gameState.phase !== 'playing' || pendingEffect) {
+      setTurnTimeLeft(null);
+      return;
+    }
+
+    const computeRemaining = () => {
+      const elapsed = (Date.now() - gameState.turnStartedAt!) / 1000;
+      return Math.max(0, TURN_TIMEOUT_SECS - elapsed);
+    };
+
+    setTurnTimeLeft(computeRemaining());
+
+    const interval = setInterval(() => {
+      const remaining = computeRemaining();
+      setTurnTimeLeft(remaining);
+      if (remaining <= 0) {
+        clearInterval(interval);
+      }
+    }, 250);
+
+    return () => clearInterval(interval);
+  }, [gameState?.turnStartedAt, gameState?.phase, pendingEffect]);
 
   // Burn result toast notification (F-044 to F-048)
   useEffect(() => {
@@ -349,6 +403,8 @@ export const GameBoard: FC = () => {
     const result = await performAction('drawDeck');
     if (!result.success && result.error) {
       toast({ title: result.error, status: 'error', duration: 2000, position: 'top' });
+    } else if (result.success) {
+      playPickSound();
     }
   }, [canAct, hasDrawnCard, turnData, performAction, toast]);
 
@@ -357,6 +413,8 @@ export const GameBoard: FC = () => {
     const result = await performAction('takeDiscard');
     if (!result.success && result.error) {
       toast({ title: result.error, status: 'error', duration: 2000, position: 'top' });
+    } else if (result.success) {
+      playPickSound();
     }
   }, [canAct, hasDrawnCard, turnData, performAction, toast]);
 
@@ -366,6 +424,8 @@ export const GameBoard: FC = () => {
       const result = await performAction('burn', slot);
       if (!result.success && result.error) {
         toast({ title: result.error, status: 'error', duration: 2000, position: 'top' });
+      } else if (result.success) {
+        playPickSound();
       }
     },
     [canAct, hasDrawnCard, turnData, performAction, toast],
@@ -379,6 +439,7 @@ export const GameBoard: FC = () => {
       if (!result.success && result.error) {
         toast({ title: result.error, status: 'error', duration: 2000, position: 'top' });
       } else if (result.success) {
+        playPickSound();
         toast({
           title: slot !== null ? `Swapped card into slot ${slot}` : 'Drawn card discarded',
           status: 'info',
@@ -652,6 +713,19 @@ export const GameBoard: FC = () => {
             </Badge>
           )}
           <IconButton
+            aria-label="Leaderboard"
+            size="xs"
+            variant="ghost"
+            color="gray.400"
+            _hover={{ color: 'yellow.300', bg: 'whiteAlpha.100' }}
+            onClick={() => setShowLeaderboard(true)}
+            icon={
+              <Text fontSize="md" lineHeight={1}>
+                {'\u{1F3C6}'}
+              </Text>
+            }
+          />
+          <IconButton
             aria-label="Exit game"
             size="xs"
             variant="ghost"
@@ -886,59 +960,82 @@ export const GameBoard: FC = () => {
             </Text>
           )}
 
-          {/* Hand */}
-          <HStack spacing={{ base: 2, md: 3 }} justify="center">
-            {myPlayer.hand.map((h: ClientHandSlot) => {
-              const peekedCard = getPeekedCardForSlot(h.slot);
-              const showFaceUp = isPeekedSlot(h.slot) && peekedCard !== null;
-              const debugKey = `${playerId}:${h.slot}`;
-              const debugCard = debugRevealed[debugKey];
-              const visibleCard = showFaceUp ? peekedCard : (debugCard ?? h.card);
-              const burnAvailable =
-                canAct && !hasDrawnCard && (turnData?.availableActions.includes('burn') ?? false);
-              /** When a drawn card is pending, clicking a hand card swaps it */
-              const swapAvailable = canAct && hasDrawnCard;
+          {/* Turn timer countdown */}
+          {turnTimeLeft !== null && gameState.phase === 'playing' && (
+            <Box w="100%" maxW="300px" mx="auto">
+              <Progress
+                value={(turnTimeLeft / TURN_TIMEOUT_SECS) * 100}
+                size="xs"
+                colorScheme={turnTimeLeft <= 5 ? 'red' : turnTimeLeft <= 10 ? 'orange' : 'green'}
+                borderRadius="full"
+                bg="gray.700"
+              />
+              <Text
+                fontSize="2xs"
+                color={turnTimeLeft <= 5 ? 'red.300' : 'gray.500'}
+                textAlign="center"
+                mt={0.5}
+              >
+                {Math.ceil(turnTimeLeft)}s
+              </Text>
+            </Box>
+          )}
 
-              const isClickable = burnAvailable || swapAvailable;
-              const tooltipLabel = swapAvailable
-                ? 'Swap with drawn card'
-                : burnAvailable
-                  ? 'Burn this card'
-                  : '';
+          {/* Hand — scrollable so penalty cards don't overflow */}
+          <Box w="100%" overflowX="auto" pb={1}>
+            <HStack spacing={{ base: 2, md: 3 }} justify="center" minW="min-content">
+              {myPlayer.hand.map((h: ClientHandSlot) => {
+                const peekedCard = getPeekedCardForSlot(h.slot);
+                const showFaceUp = isPeekedSlot(h.slot) && peekedCard !== null;
+                const debugKey = `${playerId}:${h.slot}`;
+                const debugCard = debugRevealed[debugKey];
+                const visibleCard = showFaceUp ? peekedCard : (debugCard ?? h.card);
+                const burnAvailable =
+                  canAct && !hasDrawnCard && (turnData?.availableActions.includes('burn') ?? false);
+                /** When a drawn card is pending, clicking a hand card swaps it */
+                const swapAvailable = canAct && hasDrawnCard;
 
-              const handleClick = () => {
-                if (swapAvailable) {
-                  handleDiscardChoice(h.slot);
-                } else if (burnAvailable) {
-                  handleBurnCard(h.slot);
-                }
-              };
+                const isClickable = burnAvailable || swapAvailable;
+                const tooltipLabel = swapAvailable
+                  ? 'Swap with drawn card'
+                  : burnAvailable
+                    ? 'Burn this card'
+                    : '';
 
-              return (
-                <Tooltip key={h.slot} label={tooltipLabel} isDisabled={!isClickable}>
-                  <VStack spacing={1} position="relative">
-                    {visibleCard ? (
-                      <Card
-                        card={visibleCard}
-                        isSelected={isPeekedSlot(h.slot)}
-                        isClickable={isClickable}
-                        onClick={handleClick}
-                      />
-                    ) : (
-                      <CardBack
-                        isSelected={isPeekedSlot(h.slot)}
-                        isClickable={isClickable}
-                        onClick={handleClick}
-                      />
-                    )}
-                    <Badge colorScheme={isPeekedSlot(h.slot) ? 'yellow' : 'gray'} fontSize="xs">
-                      {h.slot}
-                    </Badge>
-                  </VStack>
-                </Tooltip>
-              );
-            })}
-          </HStack>
+                const handleClick = () => {
+                  if (swapAvailable) {
+                    handleDiscardChoice(h.slot);
+                  } else if (burnAvailable) {
+                    setPendingBurnSlot(h.slot);
+                  }
+                };
+
+                return (
+                  <Tooltip key={h.slot} label={tooltipLabel} isDisabled={!isClickable}>
+                    <VStack spacing={1} position="relative">
+                      {visibleCard ? (
+                        <Card
+                          card={visibleCard}
+                          isSelected={isPeekedSlot(h.slot)}
+                          isClickable={isClickable}
+                          onClick={handleClick}
+                        />
+                      ) : (
+                        <CardBack
+                          isSelected={isPeekedSlot(h.slot)}
+                          isClickable={isClickable}
+                          onClick={handleClick}
+                        />
+                      )}
+                      <Badge colorScheme={isPeekedSlot(h.slot) ? 'yellow' : 'gray'} fontSize="xs">
+                        {h.slot}
+                      </Badge>
+                    </VStack>
+                  </Tooltip>
+                );
+              })}
+            </HStack>
+          </Box>
 
           {/* Player info */}
           <Text fontSize="xs" color="gray.500">
@@ -946,6 +1043,100 @@ export const GameBoard: FC = () => {
           </Text>
         </VStack>
       </Grid>
+
+      {/* ============================================================ */}
+      {/* Leaderboard Modal                                             */}
+      {/* ============================================================ */}
+      <Modal
+        isOpen={showLeaderboard}
+        onClose={() => setShowLeaderboard(false)}
+        isCentered
+        size="sm"
+      >
+        <ModalOverlay bg="blackAlpha.600" />
+        <ModalContent bg="gray.800" color="white">
+          <ModalHeader fontSize="md" pb={2}>
+            {'\u{1F3C6}'} Leaderboard — Round {gameState.roundNumber}
+          </ModalHeader>
+          <ModalBody>
+            <Table size="sm" variant="simple">
+              <Thead>
+                <Tr>
+                  <Th color="gray.400">#</Th>
+                  <Th color="gray.400">Player</Th>
+                  <Th color="gray.400" isNumeric>
+                    Score
+                  </Th>
+                </Tr>
+              </Thead>
+              <Tbody>
+                {[...gameState.players]
+                  .sort((a, b) => a.totalScore - b.totalScore)
+                  .map((p, i) => (
+                    <Tr
+                      key={p.playerId}
+                      bg={p.playerId === playerId ? 'whiteAlpha.100' : undefined}
+                    >
+                      <Td>{i + 1}</Td>
+                      <Td>
+                        {p.username}
+                        {p.playerId === playerId ? ' (You)' : ''}
+                      </Td>
+                      <Td isNumeric fontWeight="bold">
+                        {p.totalScore}
+                      </Td>
+                    </Tr>
+                  ))}
+              </Tbody>
+            </Table>
+          </ModalBody>
+          <ModalFooter>
+            <Button size="sm" variant="ghost" onClick={() => setShowLeaderboard(false)}>
+              Close
+            </Button>
+          </ModalFooter>
+        </ModalContent>
+      </Modal>
+
+      {/* ============================================================ */}
+      {/* Burn Confirmation Modal                                       */}
+      {/* ============================================================ */}
+      <Modal
+        isOpen={pendingBurnSlot !== null}
+        onClose={() => setPendingBurnSlot(null)}
+        isCentered
+        size="xs"
+      >
+        <ModalOverlay bg="blackAlpha.600" />
+        <ModalContent bg="gray.800" color="white">
+          <ModalHeader fontSize="md" pb={2}>
+            Burn card?
+          </ModalHeader>
+          <ModalBody>
+            <Text fontSize="sm">
+              Burn the card in slot <strong>{pendingBurnSlot}</strong>? If it doesn&apos;t match the
+              discard pile top, you&apos;ll receive a penalty card.
+            </Text>
+          </ModalBody>
+          <ModalFooter gap={2}>
+            <Button size="sm" variant="ghost" onClick={() => setPendingBurnSlot(null)}>
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              colorScheme="red"
+              onClick={() => {
+                if (pendingBurnSlot) {
+                  handleBurnCard(pendingBurnSlot);
+                }
+                setPendingBurnSlot(null);
+              }}
+            >
+              Burn
+            </Button>
+          </ModalFooter>
+        </ModalContent>
+      </Modal>
 
       {/* ============================================================ */}
       {/* Red Jack Modal (F-049) — Blind swap with opponent             */}
@@ -1328,6 +1519,7 @@ export const GameBoard: FC = () => {
                 : (gameState?.players.find((p) => p.playerId === roundEndData?.checkCalledBy)
                     ?.username ?? 'Someone')}{' '}
               called check
+              {roundEndData?.checkerDoubled ? ' (score doubled!)' : ''}
             </Text>
           </ModalHeader>
           <ModalBody>
@@ -1336,6 +1528,8 @@ export const GameBoard: FC = () => {
               {roundEndData?.allHands.map((hand: PlayerRoundResult) => {
                 const isWinner = roundEndData.roundWinners.includes(hand.playerId);
                 const isMe = hand.playerId === playerId;
+                const isChecker = hand.playerId === roundEndData.checkCalledBy;
+                const isDoubled = isChecker && roundEndData.checkerDoubled;
                 return (
                   <Box
                     key={hand.playerId}
@@ -1356,13 +1550,19 @@ export const GameBoard: FC = () => {
                             Winner
                           </Badge>
                         )}
+                        {isChecker && (
+                          <Badge colorScheme={isDoubled ? 'red' : 'blue'} fontSize="2xs">
+                            Checker
+                          </Badge>
+                        )}
                       </HStack>
                       <Text
                         fontWeight="bold"
                         fontSize="sm"
                         color={isWinner ? 'green.300' : 'red.300'}
                       >
-                        {hand.handSum} pts
+                        {isDoubled ? `${hand.handSum} x2 = ${hand.handSum * 2}` : `${hand.handSum}`}{' '}
+                        pts
                       </Text>
                     </Flex>
                     <HStack spacing={2} flexWrap="wrap">

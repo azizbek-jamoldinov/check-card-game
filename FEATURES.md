@@ -180,6 +180,45 @@ Derived from PLAN.md. Features are grouped by domain and ordered by implementati
 
 ---
 
+## Gameplay Enhancements
+
+### 21. Scoring Rule Change
+
+- [x] **E-001**: Checker-doubling scoring — if the checker does NOT have the lowest sum, their hand sum is doubled
+- [x] **E-002**: Lowest-sum player(s) always score 0 (including ties)
+- [x] **E-003**: Round end modal shows doubled score for checker when applicable
+
+### 22. Reconnection
+
+- [x] **E-004**: Socket reconnection with infinite retries and exponential backoff
+- [x] **E-005**: Auto-reconnect on tab visibility change (visibilitychange event)
+
+### 23. Hand Scrolling
+
+- [x] **E-006**: Horizontal scroll for player hand cards — prevents overflow from penalty cards
+
+### 24. Burn Confirmation
+
+- [x] **E-007**: Confirmation modal before burning a card — prevents accidental penalties
+
+### 25. Sound Effects
+
+- [x] **E-008**: Pick sound effect plays on card draw, take, burn, and swap
+
+### 26. In-Game Leaderboard
+
+- [x] **E-009**: Trophy button in header opens leaderboard modal with current scores
+
+### 27. Turn Timer
+
+- [x] **E-010**: 30-second turn timer (server-side) — auto-skips turn on timeout
+- [x] **E-011**: Turn timer handles pending drawn cards and special effects on timeout
+- [x] **E-012**: Countdown progress bar shown to all players during gameplay
+- [x] **E-013**: Toast notification when a turn times out
+- [x] **E-014**: Timer clears on round end
+
+---
+
 ## Phase 2: Post-MVP
 
 ### Stability

@@ -2,8 +2,6 @@ import { Server as SocketIOServer, Socket } from 'socket.io';
 import { RoomModel } from '../models/Room';
 import { initializeGameState, sanitizeGameState, getPeekedCards } from '../game/GameSetup';
 import { removePlayerFromGame } from '../game/TurnManager';
-import { getAvailableActions } from '../game/TurnManager';
-import { getCurrentTurnPlayerId } from '../game/TurnManager';
 import {
   generatePlayerId,
   generateRoomCode,
@@ -12,6 +10,7 @@ import {
 } from '../utils/helpers';
 import { getRoomMutex, deleteRoomMutex } from '../utils/roomLock';
 import { registerPlayer, unregisterPlayer, getSocketByPlayer } from './playerMapping';
+import { emitYourTurn } from './gameHandlers';
 import type { GameState } from '../types/game.types';
 
 // ============================================================
@@ -410,17 +409,12 @@ async function handlePlayerLeave(
 
       // If the turn changed and game is still playing, notify the new current player
       if (result.turnChanged && !result.gameEnded && gameState.phase === 'playing') {
-        const turnPlayerId = getCurrentTurnPlayerId(gameState);
-        if (turnPlayerId) {
-          const sid = getSocketByPlayer(turnPlayerId);
-          if (sid) {
-            io.to(sid).emit('yourTurn', {
-              playerId: turnPlayerId,
-              canCheck: gameState.checkCalledBy === null,
-              availableActions: getAvailableActions(gameState),
-            });
-          }
-        }
+        emitYourTurn(io, roomCode, gameState);
+
+        // Re-save game state since emitYourTurn sets turnStartedAt
+        room.gameState = gameState;
+        room.markModified('gameState');
+        await room.save();
       }
 
       return;

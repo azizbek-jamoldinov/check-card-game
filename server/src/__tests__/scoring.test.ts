@@ -314,6 +314,150 @@ describe('computeRoundResult', () => {
     // Player 1 loses → 0 + 5 = 5
     expect(result.updatedScores[gs.players[1].playerId]).toBe(5);
   });
+
+  // ============================================================
+  // Checker doubling logic
+  // ============================================================
+
+  it('checkerDoubled is false when checker has the lowest sum', () => {
+    const gs = createPlayingGameState(2);
+    gs.checkCalledBy = gs.players[0].playerId;
+    gs.scores = {
+      [gs.players[0].playerId]: 0,
+      [gs.players[1].playerId]: 0,
+    };
+
+    // Checker (player 0) has lowest sum = 2
+    setPlayerHand(gs, 0, [makeCard('A', '♥', 1), makeCard('A', '♦', 1)]);
+    setPlayerHand(gs, 1, [makeCard('5', '♥', 5), makeCard('5', '♦', 5)]);
+
+    const result = computeRoundResult(gs);
+
+    expect(result.checkerDoubled).toBe(false);
+    expect(result.roundWinners).toContain(gs.players[0].playerId);
+    expect(result.updatedScores[gs.players[0].playerId]).toBe(0);
+    expect(result.updatedScores[gs.players[1].playerId]).toBe(10);
+  });
+
+  it('checker NOT lowest — hand sum is DOUBLED', () => {
+    const gs = createPlayingGameState(3);
+    gs.checkCalledBy = gs.players[0].playerId;
+    gs.scores = {
+      [gs.players[0].playerId]: 10,
+      [gs.players[1].playerId]: 20,
+      [gs.players[2].playerId]: 15,
+    };
+
+    // Checker (player 0) has sum = 8 — NOT the lowest
+    setPlayerHand(gs, 0, [makeCard('4', '♥', 4), makeCard('4', '♦', 4)]);
+    // Player 1: sum = 10
+    setPlayerHand(gs, 1, [makeCard('5', '♥', 5), makeCard('5', '♦', 5)]);
+    // Player 2: sum = 2 — LOWEST (winner)
+    setPlayerHand(gs, 2, [makeCard('A', '♥', 1), makeCard('A', '♦', 1)]);
+
+    const result = computeRoundResult(gs);
+
+    expect(result.checkerDoubled).toBe(true);
+    expect(result.roundWinners).toEqual([gs.players[2].playerId]);
+    // Checker's sum (8) is doubled → 10 + 16 = 26
+    expect(result.updatedScores[gs.players[0].playerId]).toBe(26);
+    // Player 1 adds normally → 20 + 10 = 30
+    expect(result.updatedScores[gs.players[1].playerId]).toBe(30);
+    // Player 2 (winner) scores 0 → stays at 15
+    expect(result.updatedScores[gs.players[2].playerId]).toBe(15);
+  });
+
+  it('checker tied at lowest — scores 0, not doubled', () => {
+    const gs = createPlayingGameState(3);
+    gs.checkCalledBy = gs.players[0].playerId;
+    gs.scores = {
+      [gs.players[0].playerId]: 5,
+      [gs.players[1].playerId]: 10,
+      [gs.players[2].playerId]: 8,
+    };
+
+    // Checker (player 0) and Player 1 tied at sum = 4
+    setPlayerHand(gs, 0, [makeCard('2', '♥', 2), makeCard('2', '♦', 2)]);
+    setPlayerHand(gs, 1, [makeCard('A', '♥', 1), makeCard('3', '♦', 3)]);
+    // Player 2: sum = 10
+    setPlayerHand(gs, 2, [makeCard('5', '♥', 5), makeCard('5', '♦', 5)]);
+
+    const result = computeRoundResult(gs);
+
+    expect(result.checkerDoubled).toBe(false);
+    expect(result.roundWinners).toContain(gs.players[0].playerId);
+    expect(result.roundWinners).toContain(gs.players[1].playerId);
+    // Checker scores 0 (tied lowest) → stays at 5
+    expect(result.updatedScores[gs.players[0].playerId]).toBe(5);
+    // Player 1 tied lowest → stays at 10
+    expect(result.updatedScores[gs.players[1].playerId]).toBe(10);
+    // Player 2 adds 10 → 8 + 10 = 18
+    expect(result.updatedScores[gs.players[2].playerId]).toBe(18);
+  });
+
+  it('checker NOT lowest with zero prior score — doubled from 0', () => {
+    const gs = createPlayingGameState(2);
+    gs.checkCalledBy = gs.players[0].playerId;
+    gs.scores = {
+      [gs.players[0].playerId]: 0,
+      [gs.players[1].playerId]: 0,
+    };
+
+    // Checker (player 0) has sum = 6 — NOT the lowest
+    setPlayerHand(gs, 0, [makeCard('3', '♥', 3), makeCard('3', '♦', 3)]);
+    // Player 1 has sum = 2 — LOWEST (winner)
+    setPlayerHand(gs, 1, [makeCard('A', '♥', 1), makeCard('A', '♦', 1)]);
+
+    const result = computeRoundResult(gs);
+
+    expect(result.checkerDoubled).toBe(true);
+    // Checker's sum (6) doubled → 0 + 12 = 12
+    expect(result.updatedScores[gs.players[0].playerId]).toBe(12);
+    // Winner scores 0 → stays at 0
+    expect(result.updatedScores[gs.players[1].playerId]).toBe(0);
+  });
+
+  it('checker NOT lowest — doubling can cause game end (100+)', () => {
+    const gs = createPlayingGameState(2);
+    gs.checkCalledBy = gs.players[0].playerId;
+    gs.scores = {
+      [gs.players[0].playerId]: 80,
+      [gs.players[1].playerId]: 40,
+    };
+
+    // Checker (player 0) has sum = 15 — NOT the lowest
+    setPlayerHand(gs, 0, [makeCard('8', '♥', 8), makeCard('7', '♦', 7)]);
+    // Player 1 has sum = 4 — LOWEST (winner)
+    setPlayerHand(gs, 1, [makeCard('2', '♥', 2), makeCard('2', '♦', 2)]);
+
+    const result = computeRoundResult(gs);
+
+    expect(result.checkerDoubled).toBe(true);
+    // Checker's sum (15) doubled → 80 + 30 = 110 → game ends!
+    expect(result.updatedScores[gs.players[0].playerId]).toBe(110);
+    expect(result.gameEnded).toBe(true);
+    expect(gs.phase).toBe('gameEnd');
+  });
+
+  it('checker with empty hand (0 sum) still wins and is not doubled', () => {
+    const gs = createPlayingGameState(2);
+    gs.checkCalledBy = gs.players[0].playerId;
+    gs.scores = {
+      [gs.players[0].playerId]: 20,
+      [gs.players[1].playerId]: 30,
+    };
+
+    // Checker burned all cards → sum = 0 (lowest possible)
+    gs.players[0].hand = [];
+    setPlayerHand(gs, 1, [makeCard('5', '♥', 5)]);
+
+    const result = computeRoundResult(gs);
+
+    expect(result.checkerDoubled).toBe(false);
+    expect(result.roundWinners).toContain(gs.players[0].playerId);
+    expect(result.updatedScores[gs.players[0].playerId]).toBe(20);
+    expect(result.updatedScores[gs.players[1].playerId]).toBe(35);
+  });
 });
 
 // ============================================================

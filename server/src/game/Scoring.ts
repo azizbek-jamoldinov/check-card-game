@@ -30,6 +30,8 @@ export interface RoundResult {
   allHands: PlayerRoundResult[];
   /** PlayerIds of the round winner(s) — lowest sum scores 0 */
   roundWinners: string[];
+  /** True if the checker's hand sum was doubled (checker was not the lowest) */
+  checkerDoubled: boolean;
   /** Updated cumulative scores after this round */
   updatedScores: Record<string, number>;
   /** True if any player hit 100+ and the game should end */
@@ -40,10 +42,11 @@ export interface RoundResult {
  * Computes the round results: reveals all hands, determines winner(s),
  * and updates cumulative scores.
  *
- * Rules (F-066 to F-068):
- * - Lowest hand sum wins the round and scores 0.
- * - Tied lowest → all tied players score 0.
- * - Non-winners add their hand sum to their total score.
+ * Scoring rules:
+ * - The player(s) with the lowest hand sum score 0 for the round (ties = all get 0).
+ * - If the checker has the lowest (or tied lowest) sum: checker scores 0.
+ * - If the checker does NOT have the lowest sum: checker's hand sum is DOUBLED.
+ * - All other non-lowest players add their hand sum to their total score.
  *
  * Mutates gameState: updates scores, player totalScore, and phase.
  */
@@ -57,20 +60,26 @@ export function computeRoundResult(gameState: GameState): RoundResult {
     handSum: calculateHandValue(player.hand),
   }));
 
-  // Find the minimum hand sum (F-066)
+  // Find the minimum hand sum
   const minSum = Math.min(...allHands.map((h) => h.handSum));
 
-  // Determine winners — all players tied at minSum (F-067)
+  // Determine winners — all players tied at minSum
   const roundWinners = allHands.filter((h) => h.handSum === minSum).map((h) => h.playerId);
 
-  // Update scores (F-068)
+  const checkerId = gameState.checkCalledBy!;
+  const checkerIsWinner = roundWinners.includes(checkerId);
+
+  // Update scores
   const updatedScores: Record<string, number> = { ...gameState.scores };
   for (const hand of allHands) {
     if (roundWinners.includes(hand.playerId)) {
-      // Winner scores 0 for this round — ensure key exists
+      // Lowest sum scores 0 for this round — ensure key exists
       if (updatedScores[hand.playerId] === undefined) {
         updatedScores[hand.playerId] = 0;
       }
+    } else if (hand.playerId === checkerId && !checkerIsWinner) {
+      // Checker is NOT the lowest — double their hand sum
+      updatedScores[hand.playerId] = (updatedScores[hand.playerId] ?? 0) + hand.handSum * 2;
     } else {
       updatedScores[hand.playerId] = (updatedScores[hand.playerId] ?? 0) + hand.handSum;
     }
@@ -93,6 +102,7 @@ export function computeRoundResult(gameState: GameState): RoundResult {
     checkCalledBy: gameState.checkCalledBy!,
     allHands,
     roundWinners,
+    checkerDoubled: !checkerIsWinner,
     updatedScores,
     gameEnded,
   };

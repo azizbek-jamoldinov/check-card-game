@@ -25,6 +25,7 @@ import { computeRoundResult, computeGameEndResult } from '../game/Scoring';
 import { getSocketByPlayer } from './playerMapping';
 import { getRoomMutex } from '../utils/roomLock';
 import { getPeekedCards } from '../game/GameSetup';
+import { startTurnTimer, clearTurnTimer } from '../game/TurnTimer';
 import type { GameState, ActionType, SlotLabel, Card } from '../types/game.types';
 
 // ============================================================
@@ -46,12 +47,16 @@ export async function broadcastGameState(
 }
 
 /**
- * Sends a 'yourTurn' notification to the current turn player.
+ * Sends a 'yourTurn' notification to the current turn player and
+ * starts the 30-second turn timer.
  * (F-036)
  */
-function emitYourTurn(io: SocketIOServer, gameState: GameState): void {
+export function emitYourTurn(io: SocketIOServer, roomCode: string, gameState: GameState): void {
   const turnPlayerId = getCurrentTurnPlayerId(gameState);
   if (!turnPlayerId) return;
+
+  // Set the turn start timestamp
+  gameState.turnStartedAt = Date.now();
 
   const socketId = getSocketByPlayer(turnPlayerId);
   if (!socketId) return;
@@ -60,7 +65,80 @@ function emitYourTurn(io: SocketIOServer, gameState: GameState): void {
     playerId: turnPlayerId,
     canCheck: gameState.checkCalledBy === null,
     availableActions: getAvailableActions(gameState),
+    turnStartedAt: gameState.turnStartedAt,
   });
+
+  // Start (or restart) the turn timer
+  startTurnTimer(roomCode, (rc) => {
+    handleTurnTimeout(io, rc);
+  });
+}
+
+// ============================================================
+// Helper: Handle turn timeout — auto-skip the player's turn
+// ============================================================
+
+/**
+ * Called when the 30-second turn timer fires.
+ * Auto-advances the turn (the player forfeits their action).
+ */
+async function handleTurnTimeout(io: SocketIOServer, roomCode: string): Promise<void> {
+  const release = await getRoomMutex(roomCode).acquire();
+  try {
+    const room = await RoomModel.findOne({ roomCode });
+    if (!room || !room.gameState) return;
+
+    const gameState = room.gameState as unknown as GameState;
+    if (gameState.phase !== 'playing') return;
+
+    const timedOutPlayer = gameState.players[gameState.currentTurnIndex];
+    if (!timedOutPlayer) return;
+
+    // If the player has a pending drawn card, discard it
+    if (gameState.drawnCard && gameState.drawnByPlayerId === timedOutPlayer.playerId) {
+      processDiscardChoice(gameState, timedOutPlayer.playerId, null);
+    }
+
+    // If there's a pending special effect for this player, clear it
+    if (gameState.pendingEffect && gameState.pendingEffect.playerId === timedOutPlayer.playerId) {
+      // For Red King: return drawn cards to deck
+      if (gameState.pendingEffect.redKingCards) {
+        gameState.deck.push(...gameState.pendingEffect.redKingCards);
+      }
+      gameState.pendingEffect = null;
+    }
+
+    // Broadcast timeout notification
+    for (const player of gameState.players) {
+      const sid = getSocketByPlayer(player.playerId);
+      if (sid) {
+        io.to(sid).emit('turnTimedOut', {
+          playerId: timedOutPlayer.playerId,
+          username: timedOutPlayer.username,
+        });
+      }
+    }
+
+    // Advance the turn
+    const roundEnded = await advanceTurnAndCheckRoundEnd(io, roomCode, room, gameState);
+
+    if (!roundEnded) {
+      room.gameState = gameState;
+      room.markModified('gameState');
+      await room.save();
+
+      emitYourTurn(io, roomCode, gameState);
+      await broadcastGameState(io, roomCode, gameState);
+    }
+
+    console.log(
+      `Room ${roomCode}: ${timedOutPlayer.username} (${timedOutPlayer.playerId}) turn timed out`,
+    );
+  } catch (error) {
+    console.error('Error in handleTurnTimeout:', error);
+  } finally {
+    release();
+  }
 }
 
 // ============================================================
@@ -86,6 +164,9 @@ async function advanceTurnAndCheckRoundEnd(
     return false;
   }
 
+  // Round is over — clear the turn timer
+  clearTurnTimer(roomCode);
+
   // Round is over — compute scoring
   const roundResult = computeRoundResult(gameState);
 
@@ -103,6 +184,7 @@ async function advanceTurnAndCheckRoundEnd(
         checkCalledBy: roundResult.checkCalledBy,
         allHands: roundResult.allHands,
         roundWinners: roundResult.roundWinners,
+        checkerDoubled: roundResult.checkerDoubled,
         updatedScores: roundResult.updatedScores,
         gameEnded: roundResult.gameEnded,
         nextRoundStarting: !roundResult.gameEnded,
@@ -187,11 +269,11 @@ export function registerGameHandlers(io: SocketIOServer, socket: Socket): void {
 
         callback?.({ success: true });
 
+        // Notify the first player it's their turn
+        emitYourTurn(io, data.roomCode, gameState);
+
         // Broadcast the updated state to all players
         await broadcastGameState(io, data.roomCode, gameState);
-
-        // Notify the first player it's their turn
-        emitYourTurn(io, gameState);
 
         console.log(`Room ${data.roomCode}: transitioned from peeking to playing`);
       } catch (error) {
@@ -249,11 +331,11 @@ export function registerGameHandlers(io: SocketIOServer, socket: Socket): void {
           }
         }
 
+        // F-060: Checker still takes their normal turn — re-emit yourTurn
+        emitYourTurn(io, data.roomCode, gameState);
+
         // Broadcast updated game state (checkCalledBy is now set)
         await broadcastGameState(io, data.roomCode, gameState);
-
-        // F-060: Checker still takes their normal turn — re-emit yourTurn
-        emitYourTurn(io, gameState);
 
         console.log(`Room ${data.roomCode}: ${checker?.username} (${data.playerId}) called CHECK`);
       } catch (error) {
@@ -396,11 +478,11 @@ export function registerGameHandlers(io: SocketIOServer, socket: Socket): void {
           }
 
           if (!burnRoundEnded) {
+            // Notify the next player it's their turn
+            emitYourTurn(io, data.roomCode, gameState);
+
             // Broadcast updated game state
             await broadcastGameState(io, data.roomCode, gameState);
-
-            // Notify the next player it's their turn
-            emitYourTurn(io, gameState);
           }
 
           console.log(
@@ -480,6 +562,10 @@ export function registerGameHandlers(io: SocketIOServer, socket: Socket): void {
             }
 
             if (gameState.pendingEffect) {
+              // Pause the turn timer while the special effect is being resolved
+              clearTurnTimer(data.roomCode);
+              gameState.turnStartedAt = null;
+
               // Save state with pending effect
               room.gameState = gameState;
               room.markModified('gameState');
@@ -539,11 +625,11 @@ export function registerGameHandlers(io: SocketIOServer, socket: Socket): void {
         callback?.({ success: true });
 
         if (!discardRoundEnded) {
+          // Notify the next player it's their turn
+          emitYourTurn(io, data.roomCode, gameState);
+
           // Broadcast updated game state to all players
           await broadcastGameState(io, data.roomCode, gameState);
-
-          // Notify the next player it's their turn
-          emitYourTurn(io, gameState);
         }
 
         console.log(
@@ -688,11 +774,11 @@ export function registerGameHandlers(io: SocketIOServer, socket: Socket): void {
         }
 
         if (!jackRoundEnded) {
+          // Notify the next player it's their turn
+          emitYourTurn(io, data.roomCode, gameState);
+
           // Broadcast updated game state
           await broadcastGameState(io, data.roomCode, gameState);
-
-          // Notify the next player it's their turn
-          emitYourTurn(io, gameState);
         }
 
         console.log(
@@ -772,11 +858,11 @@ export function registerGameHandlers(io: SocketIOServer, socket: Socket): void {
         }
 
         if (!queenRoundEnded) {
-          // Broadcast updated game state
-          await broadcastGameState(io, data.roomCode, gameState);
+          // Emit yourTurn first so turnStartedAt is set before broadcast
+          emitYourTurn(io, data.roomCode, gameState);
 
-          // Notify the next player it's their turn
-          emitYourTurn(io, gameState);
+          // Broadcast updated game state (includes fresh turnStartedAt)
+          await broadcastGameState(io, data.roomCode, gameState);
         }
 
         console.log(
@@ -876,11 +962,11 @@ export function registerGameHandlers(io: SocketIOServer, socket: Socket): void {
         }
 
         if (!kingRoundEnded) {
-          // Broadcast updated game state
-          await broadcastGameState(io, data.roomCode, gameState);
+          // Emit yourTurn first so turnStartedAt is set before broadcast
+          emitYourTurn(io, data.roomCode, gameState);
 
-          // Notify the next player it's their turn
-          emitYourTurn(io, gameState);
+          // Broadcast updated game state (includes fresh turnStartedAt)
+          await broadcastGameState(io, data.roomCode, gameState);
         }
 
         console.log(`Room ${data.roomCode}: ${data.playerId} Red King choice: ${data.choice.type}`);

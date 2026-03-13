@@ -20,6 +20,8 @@ export interface ClientGameState {
   roundNumber: number;
   scores: Record<string, number>;
   phase: GamePhase;
+  /** Timestamp (ms) when the current turn started — used for turn timer */
+  turnStartedAt: number | null;
 }
 
 // ============================================================
@@ -123,6 +125,8 @@ export interface RoundEndedPayload {
   checkCalledBy: string;
   allHands: PlayerRoundResult[];
   roundWinners: string[];
+  /** True if the checker's hand sum was doubled (checker was not the lowest) */
+  checkerDoubled: boolean;
   updatedScores: Record<string, number>;
   gameEnded: boolean;
   nextRoundStarting: boolean;

@@ -133,6 +133,7 @@ export function initializeGameState(
     drawnByPlayerId: null,
     drawnSource: null,
     pendingEffect: null,
+    turnStartedAt: null,
   };
 
   // Deal 4 cards to each player (F-028)
@@ -190,5 +191,6 @@ export function sanitizeGameState(gameState: GameState, _forPlayerId: string): C
     roundNumber: gameState.roundNumber,
     scores: { ...gameState.scores },
     phase: gameState.phase,
+    turnStartedAt: gameState.turnStartedAt,
   };
 }

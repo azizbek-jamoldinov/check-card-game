@@ -38,6 +38,7 @@ function createTestGameState(overrides: Partial<GameState> = {}): GameState {
     drawnByPlayerId: null,
     drawnSource: null,
     pendingEffect: null,
+    turnStartedAt: null,
     ...overrides,
   };
 }

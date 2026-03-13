@@ -73,6 +73,8 @@ export interface GameState {
   drawnSource: 'deck' | 'discard' | null;
   /** Pending special effect awaiting player resolution (F-054) */
   pendingEffect: PendingEffect | null;
+  /** Timestamp (ms) when the current turn started — used for turn timer */
+  turnStartedAt: number | null;
 }
 
 // ============================================================
@@ -124,6 +126,8 @@ export interface ClientGameState {
   roundNumber: number;
   scores: Record<string, number>;
   phase: GamePhase;
+  /** Timestamp (ms) when the current turn started — used for turn timer */
+  turnStartedAt: number | null;
 }
 
 // ============================================================
