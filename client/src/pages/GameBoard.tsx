@@ -164,6 +164,8 @@ export const GameBoard: FC = () => {
     debugPeek,
     startNextRound,
     endGame,
+    pauseGame,
+    resumeGame,
     clearRoundEndData,
     clearGameEndData,
   } = useSocket();
@@ -282,11 +284,50 @@ export const GameBoard: FC = () => {
     };
   }, [playerId, toast]);
 
+  // Listen for game paused toast notification (F-280)
+  useEffect(() => {
+    const handler = (data: { pausedBy: string; username: string }) => {
+      toast({
+        title: `${data.pausedBy === playerId ? 'You' : data.username} paused the game`,
+        status: 'warning',
+        duration: 3000,
+        position: 'top',
+      });
+    };
+    socket.on('gamePaused', handler);
+    return () => {
+      socket.off('gamePaused', handler);
+    };
+  }, [playerId, toast]);
+
+  // Listen for game resumed toast notification (F-280)
+  useEffect(() => {
+    const handler = () => {
+      toast({
+        title: 'Game resumed',
+        status: 'info',
+        duration: 2000,
+        position: 'top',
+      });
+    };
+    socket.on('gameResumed', handler);
+    return () => {
+      socket.off('gameResumed', handler);
+    };
+  }, [toast]);
+
   // Turn timer countdown — derived from gameState.turnStartedAt
   // Timer is paused (hidden) during special effect prompts
+  // Timer is frozen (visible but stopped) when game is paused (F-279)
   useEffect(() => {
     if (!gameState?.turnStartedAt || gameState.phase !== 'playing' || pendingEffect) {
       setTurnTimeLeft(null);
+      return;
+    }
+
+    // When paused, freeze the timer at its current value — don't clear it,
+    // just stop the interval. The server will send a new turnStartedAt on resume.
+    if (gameState.paused) {
       return;
     }
 
@@ -306,7 +347,7 @@ export const GameBoard: FC = () => {
     }, 250);
 
     return () => clearInterval(interval);
-  }, [gameState?.turnStartedAt, gameState?.phase, pendingEffect]);
+  }, [gameState?.turnStartedAt, gameState?.phase, gameState?.paused, pendingEffect]);
 
   // Burn result toast notification (F-044 to F-048)
   useEffect(() => {
@@ -715,6 +756,70 @@ export const GameBoard: FC = () => {
         )}
       </AnimatePresence>
 
+      {/* Pause overlay (F-278) */}
+      {gameState.paused && (
+        <Box
+          position="fixed"
+          top={0}
+          left={0}
+          right={0}
+          bottom={0}
+          zIndex={40}
+          display="flex"
+          alignItems="center"
+          justifyContent="center"
+          bg="blackAlpha.700"
+        >
+          <VStack
+            spacing={4}
+            bg="gray.800"
+            px={8}
+            py={6}
+            borderRadius="lg"
+            border="1px solid"
+            borderColor="yellow.400"
+            shadow="dark-lg"
+            textAlign="center"
+          >
+            <Heading size="lg" color="yellow.300">
+              Game Paused
+            </Heading>
+            {gameState.pausedBy && (
+              <Text fontSize="sm" color="gray.400">
+                Paused by{' '}
+                {gameState.pausedBy === playerId
+                  ? 'you'
+                  : (gameState.players.find((p) => p.playerId === gameState.pausedBy)?.username ??
+                    'host')}
+              </Text>
+            )}
+            {roomData?.host === playerId ? (
+              <Button
+                colorScheme="green"
+                size="md"
+                onClick={async () => {
+                  const result = await resumeGame();
+                  if (!result.success && result.error) {
+                    toast({
+                      title: result.error,
+                      status: 'error',
+                      duration: 2000,
+                      position: 'top',
+                    });
+                  }
+                }}
+              >
+                {'\u25B6'} Resume
+              </Button>
+            ) : (
+              <Text fontSize="sm" color="gray.500">
+                Waiting for host to resume...
+              </Text>
+            )}
+          </VStack>
+        </Box>
+      )}
+
       {/* Peek overlay / countdown */}
       {isPeeking && peekedCards && peekedCards.length > 0 && (
         <Box
@@ -814,6 +919,42 @@ export const GameBoard: FC = () => {
             <Badge colorScheme="red" fontSize="xs" px={2} py={1}>
               CHECK ({checkCalledData.playerId === playerId ? 'You' : checkCalledData.username})
             </Badge>
+          )}
+          {/* Pause/Resume button — host only (F-277) */}
+          {roomData?.host === playerId && (
+            <Tooltip label={gameState.paused ? 'Resume game' : 'Pause game'} placement="bottom">
+              <IconButton
+                aria-label={gameState.paused ? 'Resume game' : 'Pause game'}
+                size="xs"
+                variant="ghost"
+                color={gameState.paused ? 'green.300' : 'gray.400'}
+                _hover={{
+                  color: gameState.paused ? 'green.200' : 'yellow.300',
+                  bg: 'whiteAlpha.100',
+                }}
+                isDisabled={
+                  gameState.phase === 'roundEnd' ||
+                  gameState.phase === 'gameEnd' ||
+                  gameState.phase === 'dealing'
+                }
+                onClick={async () => {
+                  const result = gameState.paused ? await resumeGame() : await pauseGame();
+                  if (!result.success && result.error) {
+                    toast({
+                      title: result.error,
+                      status: 'error',
+                      duration: 2000,
+                      position: 'top',
+                    });
+                  }
+                }}
+                icon={
+                  <Text fontSize="md" lineHeight={1}>
+                    {gameState.paused ? '\u25B6' : '\u23F8'}
+                  </Text>
+                }
+              />
+            </Tooltip>
           )}
           <IconButton
             aria-label="Leaderboard"

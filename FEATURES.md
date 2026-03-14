@@ -297,19 +297,19 @@ Derived from PLAN.md. Features are grouped by domain and ordered by implementati
 
 ### Pause Game
 
-- [ ] **F-270**: Add paused, pausedBy, pausedAt, turnTimeRemainingMs to server GameState
-- [ ] **F-271**: Add paused, pausedBy to ClientGameState
-- [ ] **F-272**: pauseGame socket event handler (host-only)
-- [ ] **F-273**: resumeGame socket event handler (host-only, restore timer)
-- [ ] **F-274**: gamePaused / gameResumed broadcast events
-- [ ] **F-275**: Block all game actions while paused
-- [ ] **F-276**: startTurnTimerWithDuration for resume with remaining time
-- [ ] **F-277**: Pause/Resume button (host-only, top-right)
-- [ ] **F-278**: Pause overlay with "Game Paused" message
-- [ ] **F-279**: Freeze turn timer display while paused
-- [ ] **F-280**: Toast notifications for pause/resume
-- [ ] **F-281**: Sanitize pause fields in client game state
-- [ ] **F-282**: Add pause fields to GameState Mongoose schema
+- [x] **F-270**: Add paused, pausedBy, pausedAt, turnTimeRemainingMs to server GameState
+- [x] **F-271**: Add paused, pausedBy to ClientGameState
+- [x] **F-272**: pauseGame socket event handler (host-only)
+- [x] **F-273**: resumeGame socket event handler (host-only, restore timer)
+- [x] **F-274**: gamePaused / gameResumed broadcast events
+- [x] **F-275**: Block all game actions while paused
+- [x] **F-276**: startTurnTimerWithDuration for resume with remaining time
+- [x] **F-277**: Pause/Resume button (host-only, top-right)
+- [x] **F-278**: Pause overlay with "Game Paused" message
+- [x] **F-279**: Freeze turn timer display while paused
+- [x] **F-280**: Toast notifications for pause/resume
+- [x] **F-281**: Sanitize pause fields in client game state
+- [x] **F-282**: Add pause fields to GameState Mongoose schema
 
 ### Future Enhancements
 

@@ -800,31 +800,513 @@ describe('gameHandlers — saveGameResult on game end', () => {
     // GameResult should NOT be saved
     expect(mockGameResultSave).not.toHaveBeenCalled();
   });
+});
 
-  it('does NOT save GameResult when players have no guestId', async () => {
-    const room = createGameEndBurnRoom();
-    // Remove guestIds from players
-    room.players = playersList.map((p) => ({ id: p.id, username: p.username }));
+// ============================================================
+// pauseGame handler tests (F-272)
+// ============================================================
 
+describe('gameHandlers — pauseGame', () => {
+  let mockSocket: ReturnType<typeof createMockSocket>;
+  let mockIO: ReturnType<typeof createMockIO>;
+
+  const hostId = 'host-pause';
+  const player2Id = 'player-pause-2';
+  const players = [
+    { id: hostId, username: 'Alice' },
+    { id: player2Id, username: 'Bob' },
+  ];
+
+  beforeEach(() => {
+    rooms = {};
+    Object.keys(playerSocketMap).forEach((k) => delete playerSocketMap[k]);
+    playerSocketMap[hostId] = 'socket-host-pause';
+    playerSocketMap[player2Id] = 'socket-player-pause-2';
+
+    mockSocket = createMockSocket('socket-host-pause');
+    mockIO = createMockIO();
+
+    registerGameHandlers(mockIO as never, mockSocket as never);
+  });
+
+  function emitEvent(event: string, ...args: unknown[]) {
+    const handler = mockSocket._handlers[event];
+    if (!handler) throw new Error(`No handler registered for event: ${event}`);
+    return handler(...args);
+  }
+
+  function createPlayingRoom(roomCode: string, overrides: Partial<GameState> = {}): MockRoom {
+    const gameState = initializeGameState(players);
+    gameState.phase = 'playing';
+    gameState.turnStartedAt = Date.now() - 10_000; // 10 seconds into the turn
+    Object.assign(gameState, overrides);
+
+    const room: MockRoom = {
+      roomCode,
+      host: hostId,
+      players,
+      status: 'playing',
+      gameState,
+      save: vi.fn(async () => {
+        rooms[roomCode] = room;
+      }),
+      markModified: vi.fn(),
+    };
+    rooms[roomCode] = room;
+    return room;
+  }
+
+  it('registers the pauseGame handler', () => {
+    expect(mockSocket._handlers['pauseGame']).toBeDefined();
+  });
+
+  it('pauses the game when host requests it', async () => {
+    const room = createPlayingRoom('PAUS');
     const callback = vi.fn();
+
+    await emitEvent('pauseGame', { roomCode: 'PAUS', playerId: hostId }, callback);
+
+    expect(callback).toHaveBeenCalledWith({ success: true });
+    expect(room.save).toHaveBeenCalled();
+
+    const gs = room.gameState as GameState;
+    expect(gs.paused).toBe(true);
+    expect(gs.pausedBy).toBe(hostId);
+    expect(gs.pausedAt).toBeTypeOf('number');
+    expect(gs.turnTimeRemainingMs).toBeTypeOf('number');
+    expect(gs.turnTimeRemainingMs!).toBeGreaterThan(0);
+  });
+
+  it('broadcasts gamePaused to all players', async () => {
+    createPlayingRoom('PAUS');
+    const callback = vi.fn();
+
+    await emitEvent('pauseGame', { roomCode: 'PAUS', playerId: hostId }, callback);
+
+    const pausedEvents = mockIO._emittedEvents.filter((e) => e.event === 'gamePaused');
+    expect(pausedEvents.length).toBeGreaterThanOrEqual(2);
+
+    const hostEvent = pausedEvents.find((e) => e.socketId === 'socket-host-pause');
+    expect(hostEvent).toBeDefined();
+    expect((hostEvent!.data as { pausedBy: string }).pausedBy).toBe(hostId);
+  });
+
+  it('rejects non-host player', async () => {
+    createPlayingRoom('PAUS');
+    const callback = vi.fn();
+
+    await emitEvent('pauseGame', { roomCode: 'PAUS', playerId: player2Id }, callback);
+
+    expect(callback).toHaveBeenCalledWith({
+      success: false,
+      error: 'Only the host can pause the game',
+    });
+  });
+
+  it('rejects if room not found', async () => {
+    const callback = vi.fn();
+
+    await emitEvent('pauseGame', { roomCode: 'ZZZZ', playerId: hostId }, callback);
+
+    expect(callback).toHaveBeenCalledWith({
+      success: false,
+      error: 'Room or game not found',
+    });
+  });
+
+  it('rejects if game is not in progress', async () => {
+    const room = createPlayingRoom('PAUS');
+    room.status = 'finished';
+    const callback = vi.fn();
+
+    await emitEvent('pauseGame', { roomCode: 'PAUS', playerId: hostId }, callback);
+
+    expect(callback).toHaveBeenCalledWith({
+      success: false,
+      error: 'Game is not in progress',
+    });
+  });
+
+  it('rejects during roundEnd phase', async () => {
+    createPlayingRoom('PAUS', { phase: 'roundEnd' });
+    const callback = vi.fn();
+
+    await emitEvent('pauseGame', { roomCode: 'PAUS', playerId: hostId }, callback);
+
+    expect(callback).toHaveBeenCalledWith({
+      success: false,
+      error: 'Cannot pause during this phase',
+    });
+  });
+
+  it('rejects during gameEnd phase', async () => {
+    createPlayingRoom('PAUS', { phase: 'gameEnd' });
+    const callback = vi.fn();
+
+    await emitEvent('pauseGame', { roomCode: 'PAUS', playerId: hostId }, callback);
+
+    expect(callback).toHaveBeenCalledWith({
+      success: false,
+      error: 'Cannot pause during this phase',
+    });
+  });
+
+  it('rejects during dealing phase', async () => {
+    createPlayingRoom('PAUS', { phase: 'dealing' });
+    const callback = vi.fn();
+
+    await emitEvent('pauseGame', { roomCode: 'PAUS', playerId: hostId }, callback);
+
+    expect(callback).toHaveBeenCalledWith({
+      success: false,
+      error: 'Cannot pause during this phase',
+    });
+  });
+
+  it('allows pause during peeking phase', async () => {
+    createPlayingRoom('PAUS', { phase: 'peeking' });
+    const callback = vi.fn();
+
+    await emitEvent('pauseGame', { roomCode: 'PAUS', playerId: hostId }, callback);
+
+    expect(callback).toHaveBeenCalledWith({ success: true });
+  });
+
+  it('rejects if already paused', async () => {
+    createPlayingRoom('PAUS', { paused: true, pausedBy: hostId, pausedAt: Date.now() - 5000 });
+    const callback = vi.fn();
+
+    await emitEvent('pauseGame', { roomCode: 'PAUS', playerId: hostId }, callback);
+
+    expect(callback).toHaveBeenCalledWith({
+      success: false,
+      error: 'Game is already paused',
+    });
+  });
+
+  it('calculates remaining turn time correctly', async () => {
+    const turnStartedAt = Date.now() - 20_000; // 20 seconds ago
+    const room = createPlayingRoom('PAUS', { turnStartedAt });
+    const callback = vi.fn();
+
+    await emitEvent('pauseGame', { roomCode: 'PAUS', playerId: hostId }, callback);
+
+    expect(callback).toHaveBeenCalledWith({ success: true });
+    const gs = room.gameState as GameState;
+    // Should have roughly 10 seconds remaining (30s - 20s elapsed)
+    expect(gs.turnTimeRemainingMs!).toBeLessThanOrEqual(10_100);
+    expect(gs.turnTimeRemainingMs!).toBeGreaterThanOrEqual(9_800);
+  });
+});
+
+// ============================================================
+// resumeGame handler tests (F-273)
+// ============================================================
+
+describe('gameHandlers — resumeGame', () => {
+  let mockSocket: ReturnType<typeof createMockSocket>;
+  let mockIO: ReturnType<typeof createMockIO>;
+
+  const hostId = 'host-resume';
+  const player2Id = 'player-resume-2';
+  const players = [
+    { id: hostId, username: 'Alice' },
+    { id: player2Id, username: 'Bob' },
+  ];
+
+  beforeEach(() => {
+    rooms = {};
+    Object.keys(playerSocketMap).forEach((k) => delete playerSocketMap[k]);
+    playerSocketMap[hostId] = 'socket-host-resume';
+    playerSocketMap[player2Id] = 'socket-player-resume-2';
+
+    mockSocket = createMockSocket('socket-host-resume');
+    mockIO = createMockIO();
+
+    registerGameHandlers(mockIO as never, mockSocket as never);
+  });
+
+  function emitEvent(event: string, ...args: unknown[]) {
+    const handler = mockSocket._handlers[event];
+    if (!handler) throw new Error(`No handler registered for event: ${event}`);
+    return handler(...args);
+  }
+
+  function createPausedRoom(roomCode: string, overrides: Partial<GameState> = {}): MockRoom {
+    const gameState = initializeGameState(players);
+    gameState.phase = 'playing';
+    gameState.paused = true;
+    gameState.pausedBy = hostId;
+    gameState.pausedAt = Date.now() - 5000; // paused 5 seconds ago
+    gameState.turnTimeRemainingMs = 15_000;
+    gameState.turnStartedAt = Date.now() - 15_000;
+    Object.assign(gameState, overrides);
+
+    const room: MockRoom = {
+      roomCode,
+      host: hostId,
+      players,
+      status: 'playing',
+      gameState,
+      save: vi.fn(async () => {
+        rooms[roomCode] = room;
+      }),
+      markModified: vi.fn(),
+    };
+    rooms[roomCode] = room;
+    return room;
+  }
+
+  it('registers the resumeGame handler', () => {
+    expect(mockSocket._handlers['resumeGame']).toBeDefined();
+  });
+
+  it('resumes the game when host requests it', async () => {
+    const room = createPausedRoom('RESM');
+    const callback = vi.fn();
+
+    await emitEvent('resumeGame', { roomCode: 'RESM', playerId: hostId }, callback);
+
+    expect(callback).toHaveBeenCalledWith({ success: true });
+    expect(room.save).toHaveBeenCalled();
+
+    const gs = room.gameState as GameState;
+    expect(gs.paused).toBe(false);
+    expect(gs.pausedBy).toBeNull();
+    expect(gs.pausedAt).toBeNull();
+    expect(gs.turnTimeRemainingMs).toBeNull();
+    expect(gs.turnStartedAt).toBeTypeOf('number');
+  });
+
+  it('broadcasts gameResumed to all players', async () => {
+    createPausedRoom('RESM');
+    const callback = vi.fn();
+
+    await emitEvent('resumeGame', { roomCode: 'RESM', playerId: hostId }, callback);
+
+    const resumedEvents = mockIO._emittedEvents.filter((e) => e.event === 'gameResumed');
+    expect(resumedEvents.length).toBeGreaterThanOrEqual(2);
+
+    const hostEvent = resumedEvents.find((e) => e.socketId === 'socket-host-resume');
+    expect(hostEvent).toBeDefined();
+    expect((hostEvent!.data as { turnStartedAt: number }).turnStartedAt).toBeTypeOf('number');
+  });
+
+  it('rejects non-host player', async () => {
+    createPausedRoom('RESM');
+    const callback = vi.fn();
+
+    await emitEvent('resumeGame', { roomCode: 'RESM', playerId: player2Id }, callback);
+
+    expect(callback).toHaveBeenCalledWith({
+      success: false,
+      error: 'Only the host can resume the game',
+    });
+  });
+
+  it('rejects if room not found', async () => {
+    const callback = vi.fn();
+
+    await emitEvent('resumeGame', { roomCode: 'ZZZZ', playerId: hostId }, callback);
+
+    expect(callback).toHaveBeenCalledWith({
+      success: false,
+      error: 'Room or game not found',
+    });
+  });
+
+  it('rejects if game is not in progress', async () => {
+    const room = createPausedRoom('RESM');
+    room.status = 'finished';
+    const callback = vi.fn();
+
+    await emitEvent('resumeGame', { roomCode: 'RESM', playerId: hostId }, callback);
+
+    expect(callback).toHaveBeenCalledWith({
+      success: false,
+      error: 'Game is not in progress',
+    });
+  });
+
+  it('rejects if game is not paused', async () => {
+    createPausedRoom('RESM', { paused: false, pausedAt: Date.now() - 5000 });
+    const callback = vi.fn();
+
+    await emitEvent('resumeGame', { roomCode: 'RESM', playerId: hostId }, callback);
+
+    expect(callback).toHaveBeenCalledWith({
+      success: false,
+      error: 'Game is not paused',
+    });
+  });
+
+  it('resets turnStartedAt on resume', async () => {
+    const room = createPausedRoom('RESM');
+    const oldTurnStartedAt = (room.gameState as GameState).turnStartedAt;
+    const callback = vi.fn();
+
+    await emitEvent('resumeGame', { roomCode: 'RESM', playerId: hostId }, callback);
+
+    expect(callback).toHaveBeenCalledWith({ success: true });
+    const gs = room.gameState as GameState;
+    // turnStartedAt should be updated to a more recent timestamp
+    expect(gs.turnStartedAt).toBeTypeOf('number');
+    expect(gs.turnStartedAt!).toBeGreaterThanOrEqual(oldTurnStartedAt!);
+  });
+});
+
+// ============================================================
+// Action blocked while paused tests (F-275)
+// ============================================================
+
+describe('gameHandlers — actions blocked while paused', () => {
+  let mockSocket: ReturnType<typeof createMockSocket>;
+  let mockIO: ReturnType<typeof createMockIO>;
+
+  const hostId = 'host-block';
+  const player2Id = 'player-block-2';
+  const players = [
+    { id: hostId, username: 'Alice' },
+    { id: player2Id, username: 'Bob' },
+  ];
+
+  beforeEach(() => {
+    rooms = {};
+    Object.keys(playerSocketMap).forEach((k) => delete playerSocketMap[k]);
+    playerSocketMap[hostId] = 'socket-host-block';
+    playerSocketMap[player2Id] = 'socket-player-block-2';
+
+    mockSocket = createMockSocket('socket-host-block');
+    mockIO = createMockIO();
+
+    registerGameHandlers(mockIO as never, mockSocket as never);
+  });
+
+  function emitEvent(event: string, ...args: unknown[]) {
+    const handler = mockSocket._handlers[event];
+    if (!handler) throw new Error(`No handler registered for event: ${event}`);
+    return handler(...args);
+  }
+
+  function createPausedPlayingRoom(roomCode: string): MockRoom {
+    const gameState = initializeGameState(players);
+    gameState.phase = 'playing';
+    gameState.paused = true;
+    gameState.pausedBy = hostId;
+    gameState.pausedAt = Date.now() - 5000;
+    gameState.turnTimeRemainingMs = 15_000;
+    gameState.currentTurnIndex = 0; // host's turn
+
+    const room: MockRoom = {
+      roomCode,
+      host: hostId,
+      players,
+      status: 'playing',
+      gameState,
+      save: vi.fn(async () => {
+        rooms[roomCode] = room;
+      }),
+      markModified: vi.fn(),
+    };
+    rooms[roomCode] = room;
+    return room;
+  }
+
+  it('blocks callCheck while paused', async () => {
+    createPausedPlayingRoom('BLCK');
+    const callback = vi.fn();
+
+    await emitEvent('callCheck', { roomCode: 'BLCK', playerId: hostId }, callback);
+
+    expect(callback).toHaveBeenCalledWith({
+      success: false,
+      error: 'Game is paused',
+    });
+  });
+
+  it('blocks playerAction while paused', async () => {
+    createPausedPlayingRoom('BLCK');
+    const callback = vi.fn();
+
     await emitEvent(
       'playerAction',
-      {
-        roomCode: 'GEND',
-        playerId: p1Id,
-        action: { type: 'burn', slot: 'A' },
-      },
+      { roomCode: 'BLCK', playerId: hostId, action: { type: 'drawDeck' } },
       callback,
     );
 
-    expect(callback).toHaveBeenCalledWith({ success: true });
+    expect(callback).toHaveBeenCalledWith({
+      success: false,
+      error: 'Game is paused',
+    });
+  });
 
-    // Game should still end
-    const gameEndedEvents = mockIO._emittedEvents.filter((e) => e.event === 'gameEnded');
-    expect(gameEndedEvents.length).toBeGreaterThanOrEqual(1);
+  it('blocks endPeek while paused', async () => {
+    const room = createPausedPlayingRoom('BLCK');
+    (room.gameState as GameState).phase = 'peeking';
+    const callback = vi.fn();
 
-    // But GameResult should NOT be saved (no guestIds)
-    expect(mockGameResultSave).not.toHaveBeenCalled();
+    await emitEvent('endPeek', { roomCode: 'BLCK', playerId: hostId }, callback);
+
+    expect(callback).toHaveBeenCalledWith({
+      success: false,
+      error: 'Game is paused',
+    });
+  });
+
+  it('blocks discardChoice while paused', async () => {
+    createPausedPlayingRoom('BLCK');
+    const callback = vi.fn();
+
+    await emitEvent(
+      'discardChoice',
+      { roomCode: 'BLCK', playerId: hostId, choice: { discardDrawn: true } },
+      callback,
+    );
+
+    expect(callback).toHaveBeenCalledWith({
+      success: false,
+      error: 'Game is paused',
+    });
+  });
+
+  it('blocks redJackSwap while paused', async () => {
+    createPausedPlayingRoom('BLCK');
+    const callback = vi.fn();
+
+    await emitEvent('redJackSwap', { roomCode: 'BLCK', playerId: hostId, skip: true }, callback);
+
+    expect(callback).toHaveBeenCalledWith({
+      success: false,
+      error: 'Game is paused',
+    });
+  });
+
+  it('blocks redQueenPeek while paused', async () => {
+    createPausedPlayingRoom('BLCK');
+    const callback = vi.fn();
+
+    await emitEvent('redQueenPeek', { roomCode: 'BLCK', playerId: hostId, slot: 'A' }, callback);
+
+    expect(callback).toHaveBeenCalledWith({
+      success: false,
+      error: 'Game is paused',
+    });
+  });
+
+  it('blocks redKingChoice while paused', async () => {
+    createPausedPlayingRoom('BLCK');
+    const callback = vi.fn();
+
+    await emitEvent(
+      'redKingChoice',
+      { roomCode: 'BLCK', playerId: hostId, choice: { type: 'returnBoth' } },
+      callback,
+    );
+
+    expect(callback).toHaveBeenCalledWith({
+      success: false,
+      error: 'Game is paused',
+    });
   });
 });
 

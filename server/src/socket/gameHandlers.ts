@@ -26,7 +26,12 @@ import { computeRoundResult, computeGameEndResult } from '../game/Scoring';
 import { getSocketByPlayer } from './playerMapping';
 import { getRoomMutex } from '../utils/roomLock';
 import { getPeekedCards } from '../game/GameSetup';
-import { startTurnTimer, clearTurnTimer } from '../game/TurnTimer';
+import {
+  startTurnTimer,
+  clearTurnTimer,
+  startTurnTimerWithDuration,
+  TURN_TIMEOUT_MS,
+} from '../game/TurnTimer';
 import type { GameState, ActionType, SlotLabel, Card } from '../types/game.types';
 import type { RoomDocument } from '../models/Room';
 
@@ -321,6 +326,12 @@ export function registerGameHandlers(io: SocketIOServer, socket: Socket): void {
 
         const gameState = room.gameState as unknown as GameState;
 
+        // F-275: Block actions while game is paused
+        if (gameState.paused) {
+          callback?.({ success: false, error: 'Game is paused' });
+          return;
+        }
+
         // Only transition if still in peeking phase
         if (gameState.phase !== 'peeking') {
           callback?.({ success: true }); // Already transitioned, no-op
@@ -379,6 +390,12 @@ export function registerGameHandlers(io: SocketIOServer, socket: Socket): void {
         }
 
         const gameState = room.gameState as unknown as GameState;
+
+        // F-275: Block actions while game is paused
+        if (gameState.paused) {
+          callback?.({ success: false, error: 'Game is paused' });
+          return;
+        }
 
         // Validate and process check call (F-059, F-061)
         const result = callCheck(gameState, data.playerId);
@@ -441,6 +458,12 @@ export function registerGameHandlers(io: SocketIOServer, socket: Socket): void {
         }
 
         const gameState = room.gameState as unknown as GameState;
+
+        // F-275: Block actions while game is paused
+        if (gameState.paused) {
+          callback?.({ success: false, error: 'Game is paused' });
+          return;
+        }
 
         // F-034: Turn validation
         const turnError = validatePlayerTurn(gameState, data.playerId);
@@ -664,6 +687,12 @@ export function registerGameHandlers(io: SocketIOServer, socket: Socket): void {
 
         const gameState = room.gameState as unknown as GameState;
 
+        // F-275: Block actions while game is paused
+        if (gameState.paused) {
+          callback?.({ success: false, error: 'Game is paused' });
+          return;
+        }
+
         // Process the discard choice
         const result = processDiscardChoice(gameState, data.playerId, data.slot);
         if (!result.success) {
@@ -846,6 +875,12 @@ export function registerGameHandlers(io: SocketIOServer, socket: Socket): void {
 
         const gameState = room.gameState as unknown as GameState;
 
+        // F-275: Block actions while game is paused
+        if (gameState.paused) {
+          callback?.({ success: false, error: 'Game is paused' });
+          return;
+        }
+
         // Validate there's a pending Red Jack effect for this player
         if (
           !gameState.pendingEffect ||
@@ -963,6 +998,12 @@ export function registerGameHandlers(io: SocketIOServer, socket: Socket): void {
 
         const gameState = room.gameState as unknown as GameState;
 
+        // F-275: Block actions while game is paused
+        if (gameState.paused) {
+          callback?.({ success: false, error: 'Game is paused' });
+          return;
+        }
+
         // Validate there's a pending Red Queen effect for this player
         if (
           !gameState.pendingEffect ||
@@ -1055,6 +1096,12 @@ export function registerGameHandlers(io: SocketIOServer, socket: Socket): void {
         }
 
         const gameState = room.gameState as unknown as GameState;
+
+        // F-275: Block actions while game is paused
+        if (gameState.paused) {
+          callback?.({ success: false, error: 'Game is paused' });
+          return;
+        }
 
         // Validate there's a pending Red King effect for this player
         if (
@@ -1293,6 +1340,199 @@ export function registerGameHandlers(io: SocketIOServer, socket: Socket): void {
       } catch (error) {
         console.error('Error in endGame:', error);
         callback?.({ success: false, error: 'Failed to end game' });
+      } finally {
+        release();
+      }
+    },
+  );
+
+  // ----------------------------------------------------------
+  // pauseGame — host pauses the game (F-272)
+  // ----------------------------------------------------------
+  socket.on(
+    'pauseGame',
+    async (
+      data: { roomCode: string; playerId: string },
+      callback?: (response: { success: boolean; error?: string }) => void,
+    ) => {
+      const release = await getRoomMutex(data.roomCode).acquire();
+      try {
+        const room = await RoomModel.findOne({ roomCode: data.roomCode });
+        if (!room || !room.gameState) {
+          callback?.({ success: false, error: 'Room or game not found' });
+          return;
+        }
+
+        // Only the host can pause the game
+        if (room.host !== data.playerId) {
+          callback?.({ success: false, error: 'Only the host can pause the game' });
+          return;
+        }
+
+        // Room must be in 'playing' status
+        if (room.status !== 'playing') {
+          callback?.({ success: false, error: 'Game is not in progress' });
+          return;
+        }
+
+        const gameState = room.gameState as unknown as GameState;
+
+        // Can only pause during peeking or playing phases
+        if (gameState.phase !== 'peeking' && gameState.phase !== 'playing') {
+          callback?.({ success: false, error: 'Cannot pause during this phase' });
+          return;
+        }
+
+        // Cannot pause if already paused
+        if (gameState.paused) {
+          callback?.({ success: false, error: 'Game is already paused' });
+          return;
+        }
+
+        // Rate limit: minimum 3 seconds between pause/resume toggles
+        if (gameState.pausedAt && Date.now() - gameState.pausedAt < 3000) {
+          callback?.({ success: false, error: 'Please wait before pausing again' });
+          return;
+        }
+
+        // Calculate remaining turn time
+        const now = Date.now();
+        const elapsed = gameState.turnStartedAt ? now - gameState.turnStartedAt : 0;
+        const remaining = Math.max(TURN_TIMEOUT_MS - elapsed, 0);
+
+        // Set pause state
+        gameState.paused = true;
+        gameState.pausedBy = data.playerId;
+        gameState.pausedAt = now;
+        gameState.turnTimeRemainingMs = remaining;
+
+        // Clear the turn timer
+        clearTurnTimer(data.roomCode);
+
+        // Save to DB
+        room.gameState = gameState;
+        room.markModified('gameState');
+        await room.save();
+
+        callback?.({ success: true });
+
+        // Broadcast gamePaused to all players (F-274)
+        const pauserUsername = getUsername(gameState, data.playerId);
+        for (const player of gameState.players) {
+          const sid = getSocketByPlayer(player.playerId);
+          if (sid) {
+            io.to(sid).emit('gamePaused', {
+              pausedBy: data.playerId,
+              username: pauserUsername,
+            });
+          }
+        }
+
+        // Also broadcast updated game state so clients see paused=true
+        await broadcastGameState(io, data.roomCode, gameState);
+
+        console.log(
+          `Room ${data.roomCode}: ${pauserUsername} paused the game (remaining: ${remaining}ms)`,
+        );
+      } catch (error) {
+        console.error('Error in pauseGame:', error);
+        callback?.({ success: false, error: 'Failed to pause game' });
+      } finally {
+        release();
+      }
+    },
+  );
+
+  // ----------------------------------------------------------
+  // resumeGame — host resumes the game (F-273)
+  // ----------------------------------------------------------
+  socket.on(
+    'resumeGame',
+    async (
+      data: { roomCode: string; playerId: string },
+      callback?: (response: { success: boolean; error?: string }) => void,
+    ) => {
+      const release = await getRoomMutex(data.roomCode).acquire();
+      try {
+        const room = await RoomModel.findOne({ roomCode: data.roomCode });
+        if (!room || !room.gameState) {
+          callback?.({ success: false, error: 'Room or game not found' });
+          return;
+        }
+
+        // Only the host can resume the game
+        if (room.host !== data.playerId) {
+          callback?.({ success: false, error: 'Only the host can resume the game' });
+          return;
+        }
+
+        // Room must be in 'playing' status
+        if (room.status !== 'playing') {
+          callback?.({ success: false, error: 'Game is not in progress' });
+          return;
+        }
+
+        const gameState = room.gameState as unknown as GameState;
+
+        // Game must be paused
+        if (!gameState.paused) {
+          callback?.({ success: false, error: 'Game is not paused' });
+          return;
+        }
+
+        // Rate limit: minimum 3 seconds between pause/resume toggles
+        if (gameState.pausedAt && Date.now() - gameState.pausedAt < 3000) {
+          callback?.({ success: false, error: 'Please wait before resuming' });
+          return;
+        }
+
+        const remainingMs = gameState.turnTimeRemainingMs;
+
+        // Clear pause state
+        gameState.paused = false;
+        gameState.pausedBy = null;
+        gameState.turnStartedAt = Date.now(); // Reset for client timer display
+        gameState.pausedAt = null;
+        gameState.turnTimeRemainingMs = null;
+
+        // Restart the turn timer with remaining time (only during playing phase)
+        if (gameState.phase === 'playing' && remainingMs != null && remainingMs > 0) {
+          startTurnTimerWithDuration(data.roomCode, remainingMs, (rc) => {
+            handleTurnTimeout(io, rc);
+          });
+        } else if (gameState.phase === 'playing') {
+          // Fallback: start a full turn timer
+          startTurnTimer(data.roomCode, (rc) => {
+            handleTurnTimeout(io, rc);
+          });
+        }
+
+        // Save to DB
+        room.gameState = gameState;
+        room.markModified('gameState');
+        await room.save();
+
+        callback?.({ success: true });
+
+        // Broadcast gameResumed to all players (F-274)
+        for (const player of gameState.players) {
+          const sid = getSocketByPlayer(player.playerId);
+          if (sid) {
+            io.to(sid).emit('gameResumed', {
+              turnStartedAt: gameState.turnStartedAt,
+            });
+          }
+        }
+
+        // Also broadcast updated game state so clients see paused=false
+        await broadcastGameState(io, data.roomCode, gameState);
+
+        console.log(
+          `Room ${data.roomCode}: ${getUsername(gameState, data.playerId)} resumed the game (remaining: ${remainingMs}ms)`,
+        );
+      } catch (error) {
+        console.error('Error in resumeGame:', error);
+        callback?.({ success: false, error: 'Failed to resume game' });
       } finally {
         release();
       }

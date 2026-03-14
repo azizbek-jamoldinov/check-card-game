@@ -77,6 +77,10 @@ interface SocketContextValue {
   startNextRound: () => Promise<{ success: boolean; error?: string }>;
   /** Host ends the game early during round-end phase */
   endGame: () => Promise<{ success: boolean; error?: string }>;
+  /** Host pauses the game (F-272) */
+  pauseGame: () => Promise<{ success: boolean; error?: string }>;
+  /** Host resumes the game (F-273) */
+  resumeGame: () => Promise<{ success: boolean; error?: string }>;
   endPeek: () => Promise<{ success: boolean; error?: string }>;
   /** Call check at the start of your turn (F-059) */
   callCheck: () => Promise<{ success: boolean; error?: string }>;
@@ -371,6 +375,16 @@ export const SocketProvider: FC<SocketProviderProps> = ({ children }) => {
       console.log(`${data.username} (${data.playerId}) turn timed out`);
     });
 
+    // F-274: Game paused notification
+    socket.on('gamePaused', (data: { pausedBy: string; username: string }) => {
+      console.log(`Game paused by ${data.username}`);
+    });
+
+    // F-274: Game resumed notification
+    socket.on('gameResumed', (data: { turnStartedAt: number }) => {
+      console.log('Game resumed, turnStartedAt:', data.turnStartedAt);
+    });
+
     return () => {
       socket.off('connect');
       socket.off('disconnect');
@@ -391,6 +405,8 @@ export const SocketProvider: FC<SocketProviderProps> = ({ children }) => {
       socket.off('roundEnded');
       socket.off('gameEnded');
       socket.off('turnTimedOut');
+      socket.off('gamePaused');
+      socket.off('gameResumed');
       socket.disconnect();
     };
   }, []);
@@ -532,6 +548,44 @@ export const SocketProvider: FC<SocketProviderProps> = ({ children }) => {
       }
       socket.emit(
         'endGame',
+        { roomCode: roomData.roomCode, playerId },
+        (response: { success: boolean; error?: string }) => {
+          resolve(response);
+        },
+      );
+    });
+  }, [roomData, playerId]);
+
+  // ----------------------------------------------------------
+  // Pause Game — host pauses the game (F-272)
+  // ----------------------------------------------------------
+  const pauseGame = useCallback((): Promise<{ success: boolean; error?: string }> => {
+    return new Promise((resolve) => {
+      if (!roomData || !playerId) {
+        resolve({ success: false, error: 'Not in a room' });
+        return;
+      }
+      socket.emit(
+        'pauseGame',
+        { roomCode: roomData.roomCode, playerId },
+        (response: { success: boolean; error?: string }) => {
+          resolve(response);
+        },
+      );
+    });
+  }, [roomData, playerId]);
+
+  // ----------------------------------------------------------
+  // Resume Game — host resumes the game (F-273)
+  // ----------------------------------------------------------
+  const resumeGame = useCallback((): Promise<{ success: boolean; error?: string }> => {
+    return new Promise((resolve) => {
+      if (!roomData || !playerId) {
+        resolve({ success: false, error: 'Not in a room' });
+        return;
+      }
+      socket.emit(
+        'resumeGame',
         { roomCode: roomData.roomCode, playerId },
         (response: { success: boolean; error?: string }) => {
           resolve(response);
@@ -780,6 +834,8 @@ export const SocketProvider: FC<SocketProviderProps> = ({ children }) => {
     startGame,
     startNextRound,
     endGame,
+    pauseGame,
+    resumeGame,
     endPeek,
     callCheck,
     performAction,

@@ -38,6 +38,25 @@ export function clearTurnTimer(roomCode: string): void {
 }
 
 /**
+ * Starts a turn timer with a custom duration (F-276).
+ * Used when resuming from pause to continue with the remaining time.
+ * Minimum duration is clamped to 1000ms.
+ */
+export function startTurnTimerWithDuration(
+  roomCode: string,
+  durationMs: number,
+  onTimeout: (roomCode: string) => void,
+): void {
+  clearTurnTimer(roomCode);
+  const clamped = Math.max(durationMs, 1000); // at least 1 second
+  const handle = setTimeout(() => {
+    turnTimers.delete(roomCode);
+    onTimeout(roomCode);
+  }, clamped);
+  turnTimers.set(roomCode, handle);
+}
+
+/**
  * Clears all turn timers (used on server shutdown).
  */
 export function clearAllTurnTimers(): void {

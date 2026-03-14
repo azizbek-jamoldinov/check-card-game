@@ -71,6 +71,10 @@ const GameStateSchema = new Schema<GameState>(
     drawnSource: { type: String, enum: ['deck', 'discard', null], default: null },
     pendingEffect: { type: PendingEffectSchema, default: null },
     gameStartedAt: { type: String, default: null },
+    paused: { type: Boolean, default: false },
+    pausedBy: { type: String, default: null },
+    pausedAt: { type: Number, default: null },
+    turnTimeRemainingMs: { type: Number, default: null },
   },
   { _id: false },
 );

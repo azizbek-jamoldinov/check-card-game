@@ -77,6 +77,14 @@ export interface GameState {
   turnStartedAt: number | null;
   /** ISO timestamp when the game (first round) started — used for GameResult */
   gameStartedAt: string | null;
+  /** Whether the game is currently paused (F-270) */
+  paused: boolean;
+  /** Player ID of who triggered the pause (F-270) */
+  pausedBy: string | null;
+  /** Timestamp (ms) when the game was paused — server-internal (F-270) */
+  pausedAt: number | null;
+  /** Remaining turn time (ms) when paused — for accurate timer resume (F-270) */
+  turnTimeRemainingMs: number | null;
 }
 
 // ============================================================
@@ -131,6 +139,10 @@ export interface ClientGameState {
   phase: GamePhase;
   /** Timestamp (ms) when the current turn started — used for turn timer */
   turnStartedAt: number | null;
+  /** Whether the game is currently paused (F-271) */
+  paused: boolean;
+  /** Player ID of who triggered the pause (F-271) */
+  pausedBy: string | null;
 }
 
 // ============================================================

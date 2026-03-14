@@ -57,6 +57,10 @@ function createTestGameState(overrides: Partial<GameState> = {}): GameState {
     pendingEffect: null,
     turnStartedAt: null,
     gameStartedAt: null,
+    paused: false,
+    pausedBy: null,
+    pausedAt: null,
+    turnTimeRemainingMs: null,
     ...overrides,
   };
 }

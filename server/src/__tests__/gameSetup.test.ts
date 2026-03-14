@@ -40,6 +40,10 @@ function createTestGameState(overrides: Partial<GameState> = {}): GameState {
     pendingEffect: null,
     turnStartedAt: null,
     gameStartedAt: null,
+    paused: false,
+    pausedBy: null,
+    pausedAt: null,
+    turnTimeRemainingMs: null,
     ...overrides,
   };
 }
@@ -533,5 +537,41 @@ describe('sanitizeGameState', () => {
         expect(h.card).toBeNull();
       }
     }
+  });
+
+  it('includes paused and pausedBy in sanitized state (F-281)', () => {
+    const gs = createFullGameState();
+    gs.paused = true;
+    gs.pausedBy = 'p1';
+    gs.pausedAt = Date.now();
+    gs.turnTimeRemainingMs = 15000;
+
+    const client = sanitizeGameState(gs, 'p1');
+
+    expect(client.paused).toBe(true);
+    expect(client.pausedBy).toBe('p1');
+  });
+
+  it('excludes pausedAt and turnTimeRemainingMs from sanitized state (F-281)', () => {
+    const gs = createFullGameState();
+    gs.paused = true;
+    gs.pausedBy = 'p1';
+    gs.pausedAt = Date.now();
+    gs.turnTimeRemainingMs = 15000;
+
+    const client = sanitizeGameState(gs, 'p1');
+    const clientAsAny = client as unknown as Record<string, unknown>;
+
+    expect(clientAsAny.pausedAt).toBeUndefined();
+    expect(clientAsAny.turnTimeRemainingMs).toBeUndefined();
+  });
+
+  it('includes paused=false and pausedBy=null when not paused (F-281)', () => {
+    const gs = createFullGameState();
+    // Default state — not paused
+    const client = sanitizeGameState(gs, 'p1');
+
+    expect(client.paused).toBe(false);
+    expect(client.pausedBy).toBeNull();
   });
 });

@@ -22,6 +22,10 @@ export interface ClientGameState {
   phase: GamePhase;
   /** Timestamp (ms) when the current turn started — used for turn timer */
   turnStartedAt: number | null;
+  /** Whether the game is currently paused (F-271) */
+  paused: boolean;
+  /** Player ID of who triggered the pause (F-271) */
+  pausedBy: string | null;
 }
 
 // ============================================================

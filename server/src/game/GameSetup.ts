@@ -135,6 +135,10 @@ export function initializeGameState(
     pendingEffect: null,
     turnStartedAt: null,
     gameStartedAt: roundNumber === 1 ? new Date().toISOString() : null,
+    paused: false,
+    pausedBy: null,
+    pausedAt: null,
+    turnTimeRemainingMs: null,
   };
 
   // Deal 4 cards to each player (F-028)
@@ -193,5 +197,7 @@ export function sanitizeGameState(gameState: GameState, _forPlayerId: string): C
     scores: { ...gameState.scores },
     phase: gameState.phase,
     turnStartedAt: gameState.turnStartedAt,
+    paused: gameState.paused,
+    pausedBy: gameState.pausedBy,
   };
 }
